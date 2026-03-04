@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f0f14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>MediglyphCode</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+</head>
+<body>
+  <header class="app-header">
+    <div class="logo">
+      <div class="logo-glyph">
+        <span style="background: var(--tier-0)"></span>
+        <span style="background: var(--tier-1)"></span>
+        <span style="background: var(--tier-2)"></span>
+        <span style="background: var(--tier-4)"></span>
+      </div>
+      MediglyphCode
+      <span class="version-badge">v1.2</span>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="encoder">Encode</button>
+      <button class="tab" data-tab="decoder">Decode</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <!-- ── ENCODER VIEW ── -->
+    <div class="view encoder-view active" id="encoderView">
+      <!-- Glyph preview first on mobile, second on desktop via CSS order -->
+      <div class="glyph-preview-section">
+        <div class="glyph-output">
+          <canvas id="glyphCanvas"></canvas>
+        </div>
+        <div class="output-actions">
+          <button class="btn btn-primary btn-sm" id="downloadPng">Download PNG</button>
+          <button class="btn btn-secondary btn-sm" id="downloadSvg">Download SVG</button>
+          <button class="btn btn-secondary btn-sm" id="copyData">Copy Hex</button>
+        </div>
+        <div class="preview-info">
+          <strong>Physical size:</strong> 18mm x 10mm &nbsp;|&nbsp;
+          <strong>Grid:</strong> 12x4 &nbsp;|&nbsp;
+          <strong>Capacity:</strong> ~47 bytes
+        </div>
+      </div>
+
+      <div class="encoder-form" id="encoderForm">
+        <!-- Identity -->
+        <div class="section-title">Identity</div>
+        <div class="form-group">
+          <label for="patientName">Full Name</label>
+          <input type="text" id="patientName" value="Peter Hughes" maxlength="12" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="patientDOB">Date of Birth</label>
+            <input type="date" id="patientDOB" value="1985-03-15">
+          </div>
+          <div class="form-group">
+            <label for="patientBlood">Blood Type</label>
+            <select id="patientBlood">
+              <option value="0">A+</option>
+              <option value="1">A-</option>
+              <option value="2">B+</option>
+              <option value="3">B-</option>
+              <option value="4">AB+</option>
+              <option value="5">AB-</option>
+              <option value="6">O+</option>
+              <option value="7">O-</option>
+              <option value="8" selected>Unknown</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Capacity -->
+        <div class="capacity-bar"><div class="capacity-fill" id="capacityFill"></div></div>
+        <div class="capacity-text" id="capacityText">0 / 4 conditions</div>
+
+        <!-- Conditions -->
+        <div class="section-title">Medical Conditions</div>
+        <input type="text" class="search-input" id="conditionSearch" placeholder="Search conditions...">
+        <div id="tierSelectors"></div>
+
+        <!-- Emergency Contact -->
+        <div class="section-title">Emergency Contact</div>
+        <div class="form-group">
+          <label for="icePhone">ICE Phone Number</label>
+          <input type="tel" id="icePhone" value="+447700900123" placeholder="+44...">
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DECODER VIEW ── -->
+    <div class="view decoder-view" id="decoderView">
+      <div class="decoder-content">
+        <!-- Upload zone -->
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-zone-icon">&#128247;</div>
+          <div class="drop-zone-text">Drop glyph image here or tap to upload</div>
+          <div class="drop-zone-hint">PNG, JPG supported</div>
+          <input type="file" id="fileInput" accept="image/*" style="display: none">
+        </div>
+
+        <!-- Camera section -->
+        <div class="camera-section" id="cameraSection" style="display: none;">
+          <video id="cameraVideo" playsinline muted></video>
+          <div class="camera-guide"></div>
+        </div>
+        <div class="camera-controls">
+          <button class="btn btn-secondary" id="toggleCamera">Open Camera</button>
+          <button class="btn btn-primary" id="captureBtn" style="display: none;">Capture</button>
+          <button class="btn btn-secondary btn-sm" id="switchCamera" style="display: none;">Flip</button>
+        </div>
+
+        <!-- Uploaded image preview -->
+        <div class="uploaded-preview" id="uploadedPreview">
+          <img id="previewImg" alt="Uploaded glyph">
+        </div>
+
+        <!-- Decode button -->
+        <button class="btn btn-primary" id="decodeBtn" style="width: 100%; margin-top: 12px; display: none;">
+          Decode Glyph
+        </button>
+
+        <!-- Decoded output -->
+        <div class="decoded-output" id="decodedOutput">
+          <div class="decoded-header">
+            <div class="decoded-avatar">&#128100;</div>
+            <div>
+              <div class="decoded-name" id="decodedName">&mdash;</div>
+              <div class="decoded-meta" id="decodedMeta">&mdash;</div>
+            </div>
+          </div>
+          <div class="decoded-tiers" id="decodedTiers"></div>
+        </div>
+
+        <!-- Debug -->
+        <div class="debug-panel" id="decodeDebug">
+          <pre id="debugPre"></pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
