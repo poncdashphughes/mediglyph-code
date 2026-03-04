@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: '.',
   publicDir: 'public',
-  base: '/mediglyph-code/',
+  base: command === 'build' ? '/mediglyph-code/' : '/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
@@ -11,4 +11,4 @@ export default defineConfig({
   server: {
     port: 3000,
   },
-});
+}));
