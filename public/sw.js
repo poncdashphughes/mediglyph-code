@@ -4,10 +4,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll([
-        '/',
-        '/index.html',
-        '/manifest.json',
-        '/favicon.svg',
+        './',
+        './index.html',
+        './manifest.json',
+        './favicon.svg',
       ]);
     }).then(() => self.skipWaiting())
   );
