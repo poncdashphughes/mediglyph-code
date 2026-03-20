@@ -33,6 +33,170 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* ── Hero / Landing ── */
+.hero {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+.hero-inner {
+  max-width: 640px;
+  width: 100%;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin-bottom: 40px;
+  letter-spacing: -0.01em;
+}
+
+.hero-heading {
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--text-primary);
+  margin-bottom: 32px;
+}
+
+.hero-heading em {
+  font-style: italic;
+  color: var(--gold);
+}
+
+.hero-body {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  max-width: 580px;
+}
+
+.hero-body strong {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.hero-body:last-of-type {
+  margin-bottom: 48px;
+}
+
+.hero-comparison {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 48px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-input);
+}
+
+.comparison-card {
+  flex: 1;
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.comparison-card.highlight {
+  background: var(--gold-dim);
+  border-left: none;
+}
+
+.comparison-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.comparison-stat {
+  font-family: var(--font-display);
+  font-size: 2.8rem;
+  font-weight: 400;
+  color: var(--text-primary);
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.comparison-card.highlight .comparison-stat {
+  color: var(--gold);
+}
+
+.comparison-detail {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.comparison-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.hero-cta {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+}
+
+.btn-lg {
+  padding: 14px 32px;
+  font-size: 1rem;
+  border-radius: 10px;
+}
+
+.hero-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.spec-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+/* App wrapper — hidden until user clicks CTA */
+.app-wrapper {
+  display: none;
+}
+
+.app-wrapper.visible {
+  display: block;
+}
+
+.hero.hidden {
+  display: none;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {

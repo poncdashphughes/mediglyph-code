@@ -30,6 +30,7 @@ const $ = (id: string) => document.getElementById(id)!;
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
+  initHero();
   initTabs();
   initEncoderForm();
   initConditionPickers();
@@ -37,6 +38,30 @@ document.addEventListener('DOMContentLoaded', () => {
   initDecoder();
   updateGlyph();
 });
+
+// ── Hero Navigation ──
+function initHero() {
+  const hero = $('heroSection');
+  const app = $('appWrapper');
+
+  const showApp = (tab: 'encoder' | 'decoder') => {
+    hero.classList.add('hidden');
+    app.classList.add('visible');
+
+    // Activate the right tab
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', (t as HTMLElement).dataset.tab === tab);
+    });
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    $(`${tab}View`).classList.add('active');
+
+    // Smooth scroll to top of app
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
+  $('heroEncode').addEventListener('click', () => showApp('encoder'));
+  $('heroDecode').addEventListener('click', () => showApp('decoder'));
+}
 
 // ── Tab Navigation ──
 function initTabs() {

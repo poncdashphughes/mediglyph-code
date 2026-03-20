@@ -12,24 +12,81 @@
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 </head>
 <body>
-  <header class="app-header">
-    <div class="logo">
-      <div class="logo-glyph">
-        <span style="background: var(--tier-0)"></span>
-        <span style="background: var(--tier-1)"></span>
-        <span style="background: var(--tier-2)"></span>
-        <span style="background: var(--tier-4)"></span>
+  <!-- ── LANDING HERO ── -->
+  <section class="hero" id="heroSection">
+    <div class="hero-inner">
+      <div class="hero-badge">
+        <div class="logo-glyph">
+          <span style="background: var(--tier-0)"></span>
+          <span style="background: var(--tier-1)"></span>
+          <span style="background: var(--tier-2)"></span>
+          <span style="background: var(--tier-4)"></span>
+        </div>
+        MediglyphCode
       </div>
-      MediglyphCode
-      <span class="version-badge">v2.0</span>
-    </div>
-    <div class="tabs">
-      <button class="tab active" data-tab="encoder">Encode</button>
-      <button class="tab" data-tab="decoder">Decode</button>
-    </div>
-  </header>
 
-  <main class="app-main">
+      <h1 class="hero-heading">Medical IDs hold <em>four</em> conditions.<br>People live with more.</h1>
+
+      <p class="hero-body">
+        A standard medical bracelet gives a paramedic a name, a blood type, and a handful of words stamped into metal. No allergies. No contraindications. No context. When the person wearing it cannot speak, those gaps become clinical risk.
+      </p>
+      <p class="hero-body">
+        MediglyphCode encodes up to <strong>145 medical conditions</strong> into a colour glyph the size of a thumbnail. Identity, triage priorities, chronic conditions, communication needs, and an emergency contact, all in 18mm&nbsp;&times;&nbsp;10mm. Machine-readable by camera. Human-readable by design.
+      </p>
+
+      <div class="hero-comparison">
+        <div class="comparison-card">
+          <div class="comparison-label">Traditional bracelet</div>
+          <div class="comparison-stat">~4</div>
+          <div class="comparison-detail">conditions, plain text, wears off</div>
+        </div>
+        <div class="comparison-divider">
+          <span>vs</span>
+        </div>
+        <div class="comparison-card highlight">
+          <div class="comparison-label">MediglyphCode glyph</div>
+          <div class="comparison-stat">145</div>
+          <div class="comparison-detail">conditions, colour-encoded, scannable</div>
+        </div>
+      </div>
+
+      <div class="hero-cta">
+        <button class="btn btn-primary btn-lg" id="heroEncode">Encode a glyph</button>
+        <button class="btn btn-secondary btn-lg" id="heroDecode">Decode a glyph</button>
+      </div>
+
+      <div class="hero-specs">
+        <span>18mm &times; 10mm</span>
+        <span class="spec-dot"></span>
+        <span>16 &times; 5 grid</span>
+        <span class="spec-dot"></span>
+        <span>5-tier triage model</span>
+        <span class="spec-dot"></span>
+        <span>Camera decode</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── APP ── -->
+  <div class="app-wrapper" id="appWrapper">
+    <header class="app-header">
+      <div class="logo">
+        <div class="logo-glyph">
+          <span style="background: var(--tier-0)"></span>
+          <span style="background: var(--tier-1)"></span>
+          <span style="background: var(--tier-2)"></span>
+          <span style="background: var(--tier-4)"></span>
+        </div>
+        MediglyphCode
+        <span class="version-badge">v2.0</span>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="encoder">Encode</button>
+        <button class="tab" data-tab="decoder">Decode</button>
+      </div>
+    </header>
+
+    <main class="app-main">
     <!-- ── ENCODER VIEW ── -->
     <div class="view encoder-view active" id="encoderView">
       <!-- Glyph preview first on mobile, second on desktop via CSS order -->
@@ -146,6 +203,8 @@
       </div>
     </div>
   </main>
+
+  </div><!-- /app-wrapper -->
 
   <script type="module" src="/src/main.ts"></script>
 </body>
