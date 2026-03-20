@@ -2,7 +2,7 @@ import './styles/global.css';
 import './pwa/register-sw';
 import type { PatientData } from './core/types';
 import { TIER_COLOURS, TIER_LABELS, BLOOD_TYPES } from './core/palette';
-import { CONDITIONS, getConditionsForTier, getSubcategoriesForTier, SUBCATEGORY_LABELS, CONDITIONS_MAP } from './core/conditions';
+import { CONDITIONS, getConditionsForTier, getSubcategoriesForTier, SUBCATEGORY_LABELS, CONDITIONS_MAP, TOTAL_SELECTABLE_CONDITIONS } from './core/conditions';
 import { renderGlyph } from './encoder/glyph-renderer';
 import { downloadPNG, downloadSVG, copyHexData } from './encoder/export';
 import { decodeFromImage } from './decoder/decode-pipeline';
@@ -166,9 +166,6 @@ function initConditionPickers() {
           arr.splice(idx, 1);
           chip.classList.remove('selected');
         } else {
-          // Max 4 total conditions
-          const totalConditions = patient.tier0.length + patient.tier1.length + patient.tier2.length + patient.tier3.length;
-          if (totalConditions >= 4) return; // At capacity
           arr.push(cond.code);
           chip.classList.add('selected');
         }
@@ -217,11 +214,12 @@ function updateCapacity() {
   const total = patient.tier0.length + patient.tier1.length + patient.tier2.length + patient.tier3.length;
   const fill = $('capacityFill') as HTMLElement;
   const text = $('capacityText');
-  const pct = (total / 4) * 100;
+  const max = TOTAL_SELECTABLE_CONDITIONS;
+  const pct = (total / max) * 100;
 
   fill.style.width = `${pct}%`;
-  fill.className = 'capacity-fill' + (pct >= 100 ? ' full' : pct >= 75 ? ' warning' : '');
-  text.textContent = `${total} / 4 conditions`;
+  fill.className = 'capacity-fill' + (pct >= 90 ? ' warning' : '');
+  text.textContent = `${total} condition${total !== 1 ? 's' : ''} selected`;
 
   // Update tier counts
   for (let t = 0; t <= 3; t++) {

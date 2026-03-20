@@ -11,8 +11,8 @@ export function createLayout(pxPerMm: number = 20): GlyphLayout {
   const humanZoneWidth = t0Size + tSmallSize * 2; // 6mm
   const humanZoneHeight = t0Size; // 3mm
 
-  const dataGridCols = 12;
-  const dataGridRows = 4;
+  const dataGridCols = 16;
+  const dataGridRows = 5;
   const usableWidth = (18 - 1.5) * pxPerMm; // 16.5mm
   const dataCellSize = usableWidth / dataGridCols;
 

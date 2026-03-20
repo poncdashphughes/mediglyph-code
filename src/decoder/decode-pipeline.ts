@@ -30,7 +30,7 @@ export function decodeFromImage(
   const tSmallSize = contentWidth * (1.5 / 16.5);
   const humanZoneHeight = t0Size;
   const dataZoneY = bounds.minY + humanZoneHeight + contentWidth * (0.5 / 16.5);
-  const dataCellSize = contentWidth / 12;
+  const dataCellSize = contentWidth / 16;
 
   // Step 3: Sample Human Zone
   const humanZone = sampleHumanZone(ctx, bounds.minX, bounds.minY, t0Size, tSmallSize);
@@ -111,29 +111,54 @@ function sampleDataZone(
   const nibbles: number[] = [];
   const confidences: number[] = [];
 
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 12; col++) {
+  // Sample mid-edge points: safely inside the colored area but away from
+  // center text overlay and cell border anti-aliasing.
+  const sampleOffsets: [number, number][] = [
+    [0.25, 0.20], [0.75, 0.20],  // top-left & top-right quadrants
+    [0.25, 0.80], [0.75, 0.80],  // bottom-left & bottom-right quadrants
+    [0.20, 0.50], [0.80, 0.50],  // left & right mid-edges
+  ];
+
+  const sampleRadius = Math.max(1.5, cellSize * 0.06);
+
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 16; col++) {
       const cellX = startX + col * cellSize;
       const cellY = startY + row * cellSize;
 
-      // Sample 4 corners (avoiding center text overlay)
-      const cornerOffsets: [number, number][] = [
-        [0.12, 0.12], [0.88, 0.12],
-        [0.12, 0.88], [0.88, 0.88],
-      ];
+      // Collect matches from all sample points, use majority vote
+      const votes: Map<number, { count: number; totalDist: number; confidence: number }> = new Map();
 
-      let bestMatch = { index: 0, distance: Infinity, confidence: 0, color: '' };
-
-      for (const [ox, oy] of cornerOffsets) {
-        const sample = sampleCell(ctx, cellX + cellSize * ox, cellY + cellSize * oy, cellSize * 0.08);
+      for (const [ox, oy] of sampleOffsets) {
+        const sample = sampleCell(ctx, cellX + cellSize * ox, cellY + cellSize * oy, sampleRadius);
         const match = matchToPalette(sample);
-        if (match.distance < bestMatch.distance) {
-          bestMatch = match;
+        const existing = votes.get(match.index);
+        if (existing) {
+          existing.count++;
+          existing.totalDist += match.distance;
+          existing.confidence = Math.max(existing.confidence, match.confidence);
+        } else {
+          votes.set(match.index, { count: 1, totalDist: match.distance, confidence: match.confidence });
         }
       }
 
-      nibbles.push(bestMatch.index);
-      confidences.push(bestMatch.confidence);
+      // Pick the index with the most votes; break ties by lowest avg distance
+      let bestIndex = 0;
+      let bestCount = 0;
+      let bestAvgDist = Infinity;
+      let bestConfidence = 0;
+      for (const [index, v] of votes) {
+        const avgDist = v.totalDist / v.count;
+        if (v.count > bestCount || (v.count === bestCount && avgDist < bestAvgDist)) {
+          bestIndex = index;
+          bestCount = v.count;
+          bestAvgDist = avgDist;
+          bestConfidence = v.confidence;
+        }
+      }
+
+      nibbles.push(bestIndex);
+      confidences.push(bestConfidence);
     }
   }
 

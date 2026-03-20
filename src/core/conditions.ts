@@ -214,6 +214,19 @@ export const CONDITIONS_MAP: Record<string, string> = Object.fromEntries(
   CONDITIONS.map(c => [c.code, c.label])
 );
 
+/**
+ * Sequential bit index for each condition (tiers 0-3 only, used in bitfield encoding).
+ * Maps hex code → bit position (0-based).
+ */
+const _selectableConditions = CONDITIONS.filter(c => c.tier <= 3);
+export const CONDITION_BIT_INDEX: Record<string, number> = Object.fromEntries(
+  _selectableConditions.map((c, i) => [c.code, i])
+);
+export const BIT_INDEX_TO_CODE: Record<number, string> = Object.fromEntries(
+  _selectableConditions.map((c, i) => [i, c.code])
+);
+export const TOTAL_SELECTABLE_CONDITIONS = _selectableConditions.length;
+
 /** Subcategory display names */
 export const SUBCATEGORY_LABELS: Record<string, string> = {
   cardiac: 'Cardiac',

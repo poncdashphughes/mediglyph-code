@@ -1,6 +1,6 @@
 import type { PatientData, DecodedResult } from './types';
 import { BLOOD_TYPES } from './palette';
-import { CONDITIONS_MAP } from './conditions';
+import { CONDITIONS_MAP, CONDITION_BIT_INDEX, BIT_INDEX_TO_CODE, TOTAL_SELECTABLE_CONDITIONS } from './conditions';
 
 /**
  * Encode a character (A-Z, 0-9, space) as a 6-bit value.
@@ -53,24 +53,29 @@ function unpackName(bytes: number[]): string {
   return chars.join('').trim();
 }
 
+/** Number of bytes needed for condition bitfield */
+const BITFIELD_BYTES = 19; // 152 bits, covers all 145 selectable conditions
+
+/** Number of BCD bytes for phone (12 digits) */
+const PHONE_BYTES = 6;
+
 /**
  * Encode patient data into a byte array.
  *
- * Format (24 bytes = 48 nibbles = 12×4 grid):
- *   Byte 0:      Version (0x12 for v1.2)
- *   Byte 1:      Flags (tier presence bitmask)
- *   Bytes 2-10:  Name (12 chars, 6-bit packed into 9 bytes)
- *   Bytes 11-13: DOB (YY, MM, DD)
- *   Byte 14:     Blood type index (0-8)
- *   Bytes 15-18: Condition codes (up to 4, padded with 0xFF)
- *   Bytes 19-22: Phone (last 8 digits as BCD)
- *   Byte 23:     Reserved (0x00)
+ * Format v2.0 (40 bytes = 80 nibbles = 16×5 grid):
+ *   Byte 0:       Version (0x20 for v2.0)
+ *   Byte 1:       Flags (tier presence bitmask)
+ *   Bytes 2-10:   Name (12 chars, 6-bit packed into 9 bytes)
+ *   Bytes 11-13:  DOB (YY, MM, DD)
+ *   Byte 14:      Blood type index (0-8)
+ *   Bytes 15-33:  Condition bitfield (19 bytes = 152 bits)
+ *   Bytes 34-39:  Phone (12 digits as BCD, 6 bytes)
  */
 export function encodePatientData(patient: PatientData): number[] {
   const data: number[] = [];
 
   // Byte 0: Version
-  data.push(0x12);
+  data.push(0x20);
 
   // Byte 1: Flags
   let flags = 0;
@@ -97,31 +102,33 @@ export function encodePatientData(patient: PatientData): number[] {
   // Byte 14: Blood type
   data.push(patient.blood);
 
-  // Bytes 15-18: Conditions (up to 4)
-  const allConditions = [
-    ...patient.tier0.map(c => parseInt(c, 16)),
-    ...patient.tier1.map(c => parseInt(c, 16)),
-    ...patient.tier2.map(c => parseInt(c, 16)),
-    ...patient.tier3.map(c => parseInt(c, 16)),
-  ].slice(0, 4);
-
-  while (allConditions.length < 4) {
-    allConditions.push(0xFF);
+  // Bytes 15-33: Condition bitfield (19 bytes)
+  const bitfield = new Uint8Array(BITFIELD_BYTES);
+  const allCodes = [
+    ...patient.tier0,
+    ...patient.tier1,
+    ...patient.tier2,
+    ...patient.tier3,
+  ];
+  for (const code of allCodes) {
+    const bitIdx = CONDITION_BIT_INDEX[code];
+    if (bitIdx !== undefined) {
+      const byteIdx = Math.floor(bitIdx / 8);
+      const bitPos = 7 - (bitIdx % 8);
+      bitfield[byteIdx] |= (1 << bitPos);
+    }
   }
-  data.push(...allConditions);
+  data.push(...bitfield);
 
-  // Bytes 19-22: Phone (last 8 digits as BCD)
-  const phoneDigits = patient.phone.replace(/\D/g, '').slice(-8).padStart(8, '0');
-  for (let i = 0; i < 4; i++) {
+  // Bytes 34-39: Phone (up to 12 digits as BCD)
+  const phoneDigits = patient.phone.replace(/\D/g, '').slice(-(PHONE_BYTES * 2)).padStart(PHONE_BYTES * 2, '0');
+  for (let i = 0; i < PHONE_BYTES; i++) {
     const high = parseInt(phoneDigits[i * 2]) || 0;
     const low = parseInt(phoneDigits[i * 2 + 1]) || 0;
     data.push((high << 4) | low);
   }
 
-  // Byte 23: Reserved
-  data.push(0x00);
-
-  // Total: 24 bytes = 48 nibbles = 12×4 grid
+  // Total: 40 bytes = 80 nibbles = 16×5 grid
   return data;
 }
 
@@ -133,7 +140,7 @@ export function dataToColorCells(data: number[]): number[] {
     cells.push((byte >> 4) & 0x0F);
     cells.push(byte & 0x0F);
   }
-  return cells.slice(0, 48); // 12×4
+  return cells.slice(0, 80); // 16×5
 }
 
 /** Decode nibbles back into patient data */
@@ -172,29 +179,35 @@ export function decodeColorData(nibbles: number[]): DecodedResult {
   // Blood type (byte 14)
   result.blood = BLOOD_TYPES[bytes[14]] || 'Unknown';
 
-  // Conditions (bytes 15-18)
-  for (let i = 15; i < 19; i++) {
-    const code = bytes[i];
-    if (code !== 0xFF && code !== 0xEE) {
-      const hexCode = code.toString(16).padStart(2, '0');
-      const label = CONDITIONS_MAP[hexCode] || hexCode;
-      if (code < 0x10) result.tier0.push(label);
-      else if (code < 0x38) result.tier1.push(label);
-      else if (code < 0x70) result.tier2.push(label);
-      else if (code < 0x8e) result.tier3.push(label);
+  // Conditions (bytes 15-33, bitfield)
+  for (let bitIdx = 0; bitIdx < TOTAL_SELECTABLE_CONDITIONS; bitIdx++) {
+    const byteIdx = 15 + Math.floor(bitIdx / 8);
+    const bitPos = 7 - (bitIdx % 8);
+    if (byteIdx < bytes.length && (bytes[byteIdx] >> bitPos) & 1) {
+      const code = BIT_INDEX_TO_CODE[bitIdx];
+      if (code) {
+        const label = CONDITIONS_MAP[code] || code;
+        const codeNum = parseInt(code, 16);
+        if (codeNum < 0x10) result.tier0.push(label);
+        else if (codeNum < 0x38) result.tier1.push(label);
+        else if (codeNum < 0x70) result.tier2.push(label);
+        else if (codeNum < 0x8e) result.tier3.push(label);
+      }
     }
   }
 
-  // Phone (bytes 19-22)
+  // Phone (bytes 34-39, 12 BCD digits)
   let phoneDigits = '';
-  for (let i = 19; i < 23 && i < bytes.length; i++) {
+  for (let i = 34; i < 40 && i < bytes.length; i++) {
     const byte = bytes[i];
     if (byte !== 0xEE) {
       phoneDigits += (byte >> 4).toString();
       phoneDigits += (byte & 0x0F).toString();
     }
   }
-  if (phoneDigits && phoneDigits !== '00000000') {
+  // Strip leading zeros but keep at least the meaningful digits
+  phoneDigits = phoneDigits.replace(/^0+/, '');
+  if (phoneDigits) {
     result.phone = phoneDigits;
   }
 

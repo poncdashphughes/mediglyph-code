@@ -4,8 +4,9 @@
     {
       "name": "mediglyph-dev",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--host"],
-      "port": 3000
+      "runtimeArgs": ["vite", "--host", "--port", "5199"],
+      "port": 5199,
+      "autoPort": false
     }
   ]
 }
