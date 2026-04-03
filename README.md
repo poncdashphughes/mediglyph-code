@@ -111,4 +111,35 @@ Builds to `dist/` for production deployment.
 
 ## Licence
 
-MIT
+This project uses a **dual licence** structure:
+
+- **Specification** (encoding format, triage model, data schema, colour palette, grid geometry): [Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)](https://creativecommons.org/licenses/by-sa/4.0/)
+- **Software** (encoder, decoder, and supporting tools): [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.en.html)
+
+See [LICENCE](LICENCE) for full terms.
+
+### What this means in practice
+
+- **Using the specification** to build your own tools, research, or products: yes, with attribution and share-alike.
+- **Using or modifying the software** and making it available over a network: you must release your source code under AGPL-3.0.
+- **Manufacturing physical products** (bracelets, tags, cards, stickers, pendants) that carry MediglyphCode glyphs: explicitly permitted and encouraged, no additional licence needed, provided the glyph is generated using AGPL-3.0 compliant tools.
+- **Charging end users** to generate or decode MediglyphCode glyphs using software derived from this project: not compatible with the intent of this licence.
+
+### Why this licence structure
+
+MediglyphCode exists to make medical identification better, not to create a toll booth. The specification is open so that anyone can build on the format. The software is AGPL-3.0 so that encoding and decoding tools stay free for the people who need them most: patients, carers, and first responders.
+
+Physical products are a different matter. A bracelet manufacturer adding MediglyphCode glyphs to their products is exactly the kind of adoption this project wants to see. The licence explicitly permits this. What it does not permit is taking the open-source encoder, wrapping it in a paywall, and charging patients to generate their own medical identification.
+
+If you are building something with MediglyphCode and are unsure whether your use case is compatible, please get in touch.
+
+## Status
+
+MediglyphCode is a working proof of concept. The encoder and decoder are functional, the specification is stable at v2.0, and the system has been tested across a range of conditions and device cameras. It has **not** been clinically validated. It is not a medical device. Do not rely on it for clinical decisions without independent verification.
+
+## Contact
+
+Created by **Peter Hughes**.
+
+- Project: [https://poncdashphughes.github.io/mediglyph-code/](https://poncdashphughes.github.io/mediglyph-code/)
+- GitHub: [https://github.com/poncdashphughes/mediglyph-code](https://github.com/poncdashphughes/mediglyph-code)

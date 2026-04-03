@@ -1,3 +1,11 @@
+/*
+ * MediglyphCode
+ * Copyright (c) 2025-2026 Peter Hughes
+ * Specification: CC BY-SA 4.0 | Software: AGPL-3.0
+ * See LICENCE file for full terms.
+ * https://poncdashphughes.github.io/mediglyph-code/
+ */
+
 const CACHE_NAME = 'mediglyph-v2';
 
 self.addEventListener('install', (event) => {
