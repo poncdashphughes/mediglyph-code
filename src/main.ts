@@ -404,9 +404,15 @@ function runDecode(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
     | undefined;
   if (!bounds) return;
 
+  // Use the preprocessed canvas (de-rotated, same frame the bounds refer to)
+  // so the OCR crop lines up with the printed name above the glyph. Falls back
+  // to the original canvas if preprocessing returned the input unchanged.
+  const ocrCanvas =
+    (decoded.debug?.preprocessedCanvas as HTMLCanvasElement | undefined) ?? canvas;
+
   const nameEl = $('decodedName');
   nameEl.textContent = 'Reading name\u2026';
-  readExternalName(canvas, bounds)
+  readExternalName(ocrCanvas, bounds)
     .then((res) => {
       if (!res.attempted) {
         nameEl.textContent = '\u2014';

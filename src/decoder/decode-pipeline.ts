@@ -10,9 +10,11 @@ import {
   matchTierColor,
   matchToReference,
   sampleCell,
+  type ImageBuffer,
   type PaletteLUT,
   type RGB,
 } from './classify-color';
+import { preprocessImage } from './preprocess';
 
 interface ContentBounds {
   found: boolean;
@@ -24,7 +26,11 @@ interface ContentBounds {
 
 /**
  * v3.0 decode pipeline:
- *   1. Find content bounds.
+ *   0. Preprocess: estimate background + rotation, de-rotate the canvas
+ *      so the glyph is horizontal. Cache one ImageData buffer for the
+ *      whole pipeline.
+ *   1. Find content bounds (saturated core + outward expand to pick up
+ *      Black/White/Grey palette cells at glyph edges).
  *   2. Derive layout from the 24×14mm proportions.
  *   3. Sample calibration cells in the name block → build per-glyph LUT.
  *   4. Sample the 16×5 data grid against the LUT.
@@ -34,7 +40,10 @@ export function decodeFromImage(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
 ): DecodedResult {
-  const bounds = findContentBounds(ctx, canvas.width, canvas.height);
+  const pre = preprocessImage(canvas, ctx);
+  const buf: ImageBuffer = { data: pre.data, width: pre.width, height: pre.height };
+
+  const bounds = findContentBounds(buf, pre.background);
   if (!bounds.found) {
     return emptyResult('Could not find glyph content');
   }
@@ -65,11 +74,11 @@ export function decodeFromImage(
   const dataCellSize = contentWidth / 16;
 
   // Sample human-zone triage indicators
-  const humanZone = sampleHumanZone(ctx, t0X, t0Y, tQuadX, tQuadY, t0Size, tSmallSize);
+  const humanZone = sampleHumanZone(buf, t0X, t0Y, tQuadX, tQuadY, t0Size, tSmallSize);
 
   // Sample name-block calibration cells → build LUT
   const calibSamples = sampleNameBlockCalibration(
-    ctx,
+    buf,
     nameBlockX,
     nameBlockY,
     nameBlockCellW,
@@ -79,7 +88,7 @@ export function decodeFromImage(
 
   // Sample data grid against the LUT
   const { nibbles, confidence } = sampleDataZone(
-    ctx,
+    buf,
     dataZoneX,
     dataZoneY,
     dataCellSize,
@@ -98,6 +107,12 @@ export function decodeFromImage(
     layout: { t0Size, tSmallSize, dataCellSize, nameBlockCellW, nameBlockCellH },
     confidence,
     lut,
+    rotation: pre.rotation,
+    background: pre.background,
+    // Hand the rotated canvas back so external-name OCR crops from the same
+    // de-rotated frame the decoder used. Otherwise the bounds would point at
+    // the wrong region of the original photo.
+    preprocessedCanvas: pre.canvas,
   };
   return decoded;
 }
@@ -118,23 +133,36 @@ function emptyResult(error: string): DecodedResult {
   };
 }
 
+/**
+ * Two-pass bounds detector:
+ *
+ *   1. Saturated pass — bounds the highly chromatic pixels that can only
+ *      come from the colour palette (greyscale text and faint backgrounds
+ *      have low chroma and are ignored).
+ *   2. Expand pass — walks outward one row/column at a time to absorb
+ *      Black/White/Grey/Silver palette cells at the glyph edges, stopping
+ *      at the first "all background" row/column. The white gap between
+ *      the printed name label (in v3.0 exports) and the glyph terminates
+ *      the expansion cleanly.
+ *
+ * The "ink" predicate is adaptive: anything noticeably darker than the
+ * estimated photo background counts. That keeps us robust to off-white
+ * paper, screen captures, and slightly tinted prints.
+ */
 function findContentBounds(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
+  buf: ImageBuffer,
+  background: { r: number; g: number; b: number },
 ): ContentBounds {
-  const data = ctx.getImageData(0, 0, width, height).data;
+  const { data, width, height } = buf;
 
-  // Pass 1: bound the highly-saturated pixels. The glyph is built from a
-  // 16-colour palette where most entries are vivid — the saturated region
-  // always lies inside the glyph and never inside printed greyscale text
-  // (the patient name above the glyph in v3.0 exports).
+  // Pass 1: saturated bounds
   let sMinX = width, sMinY = height, sMaxX = 0, sMaxY = 0;
   let found = false;
   for (let y = 0; y < height; y++) {
+    const row = y * width * 4;
     for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const i = row + x * 4;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
       const chroma = Math.max(r, g, b) - Math.min(r, g, b);
       if (chroma >= 40) {
         found = true;
@@ -147,13 +175,16 @@ function findContentBounds(
   }
   if (!found) return { found: false, minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
-  // Pass 2: expand outward to include neighbouring B&W edge cells (Black,
-  // White, Grey, Silver are valid palette colours). Walk one row/column at
-  // a time and stop when an entire row/column is white — that gap separates
-  // the glyph from the printed name above it.
+  // Adaptive "is ink" threshold — at least 25 levels darker than the bg
+  // mean luma, OR chromatic. Handles non-pure-white paper.
+  const bgLuma = (background.r + background.g + background.b) / 3;
+  const inkLuma = Math.max(0, bgLuma - 25);
   const isInk = (x: number, y: number): boolean => {
     const i = (y * width + x) * 4;
-    return data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245;
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    if (chroma >= 25) return true;
+    return (r + g + b) / 3 < inkLuma;
   };
   const rowHasInk = (y: number, x0: number, x1: number): boolean => {
     for (let x = x0; x <= x1; x++) if (isInk(x, y)) return true;
@@ -164,6 +195,7 @@ function findContentBounds(
     return false;
   };
 
+  // Pass 2: expand to grab edge B&W cells
   let minX = sMinX, minY = sMinY, maxX = sMaxX, maxY = sMaxY;
   while (minY > 0 && rowHasInk(minY - 1, sMinX, sMaxX)) minY--;
   while (maxY < height - 1 && rowHasInk(maxY + 1, sMinX, sMaxX)) maxY++;
@@ -174,7 +206,7 @@ function findContentBounds(
 }
 
 function sampleHumanZone(
-  ctx: CanvasRenderingContext2D,
+  buf: ImageBuffer,
   t0X: number,
   t0Y: number,
   tQuadX: number,
@@ -182,11 +214,11 @@ function sampleHumanZone(
   t0Size: number,
   tSmallSize: number,
 ): HumanZoneResult {
-  const t0Sample = sampleCell(ctx, t0X + t0Size / 2, t0Y + t0Size / 2, t0Size * 0.25);
-  const t1Sample = sampleCell(ctx, tQuadX + tSmallSize * 0.5, tQuadY + tSmallSize * 0.5, tSmallSize * 0.3);
-  const t2Sample = sampleCell(ctx, tQuadX + tSmallSize * 1.5, tQuadY + tSmallSize * 0.5, tSmallSize * 0.3);
-  const t3Sample = sampleCell(ctx, tQuadX + tSmallSize * 0.5, tQuadY + tSmallSize * 1.5, tSmallSize * 0.3);
-  const t4Sample = sampleCell(ctx, tQuadX + tSmallSize * 1.5, tQuadY + tSmallSize * 1.5, tSmallSize * 0.3);
+  const t0Sample = sampleCell(buf, t0X + t0Size / 2, t0Y + t0Size / 2, t0Size * 0.25);
+  const t1Sample = sampleCell(buf, tQuadX + tSmallSize * 0.5, tQuadY + tSmallSize * 0.5, tSmallSize * 0.3);
+  const t2Sample = sampleCell(buf, tQuadX + tSmallSize * 1.5, tQuadY + tSmallSize * 0.5, tSmallSize * 0.3);
+  const t3Sample = sampleCell(buf, tQuadX + tSmallSize * 0.5, tQuadY + tSmallSize * 1.5, tSmallSize * 0.3);
+  const t4Sample = sampleCell(buf, tQuadX + tSmallSize * 1.5, tQuadY + tSmallSize * 1.5, tSmallSize * 0.3);
 
   return {
     tier0: matchTierColor(t0Sample, 0).active,
@@ -198,26 +230,27 @@ function sampleHumanZone(
 }
 
 /**
- * Sample the 30 name-block cells. Each cell has a letter (or space) overlaid on a
- * calibration-coloured background. Sample the four corners — letter strokes sit in
- * the centre, so corners read the pure cell fill.
+ * Sample the 30 name-block calibration cells with median sampling at four
+ * corner insets. Sampling near the corners keeps us inside the cell even
+ * if the glyph has slight perspective distortion the rotation step did
+ * not fully correct.
  */
 function sampleNameBlockCalibration(
-  ctx: CanvasRenderingContext2D,
+  buf: ImageBuffer,
   startX: number,
   startY: number,
   cellW: number,
   cellH: number,
 ): RGB[] {
   const samples: RGB[] = [];
-  const r = Math.max(1, Math.min(cellW, cellH) * 0.12);
+  const r = Math.max(1, Math.min(cellW, cellH) * 0.18);
 
-  // Four corner offsets, inset from the cell edge
   const offsets: Array<[number, number]> = [
-    [0.15, 0.15],
-    [0.85, 0.15],
-    [0.15, 0.85],
-    [0.85, 0.85],
+    [0.25, 0.25],
+    [0.75, 0.25],
+    [0.25, 0.75],
+    [0.75, 0.75],
+    [0.5, 0.5],
   ];
 
   for (let row = 0; row < NAME_BLOCK_ROWS; row++) {
@@ -225,9 +258,9 @@ function sampleNameBlockCalibration(
       const cx = startX + col * cellW;
       const cy = startY + row * cellH;
       const corners = offsets.map(([ox, oy]) =>
-        sampleCell(ctx, cx + cellW * ox, cy + cellH * oy, r),
+        sampleCell(buf, cx + cellW * ox, cy + cellH * oy, r),
       );
-      // Mean of the four corner samples
+      // Mean of the (already median-per-region) samples
       const mean: RGB = [
         Math.round(corners.reduce((s, c) => s + c[0], 0) / corners.length),
         Math.round(corners.reduce((s, c) => s + c[1], 0) / corners.length),
@@ -239,8 +272,14 @@ function sampleNameBlockCalibration(
   return samples;
 }
 
+/**
+ * Sample the 16×5 data grid. For every cell we sample the LUT at several
+ * interior offsets, classify each one against the per-photograph LUT,
+ * and run a vote: cells where multiple internal samples agree carry more
+ * weight, ties break on tightest distance.
+ */
 function sampleDataZone(
-  ctx: CanvasRenderingContext2D,
+  buf: ImageBuffer,
   startX: number,
   startY: number,
   cellSize: number,
@@ -249,13 +288,14 @@ function sampleDataZone(
   const nibbles: number[] = [];
   const confidences: number[] = [];
 
-  // 6 interior sample points, avoiding cell edges and anti-aliasing
+  // Nine interior sample points (3×3 grid inset 25% from cell edges) plus
+  // the centre. More samples = more outlier resilience.
   const sampleOffsets: Array<[number, number]> = [
-    [0.3, 0.3], [0.7, 0.3],
-    [0.3, 0.7], [0.7, 0.7],
-    [0.5, 0.25], [0.5, 0.75],
+    [0.30, 0.30], [0.50, 0.30], [0.70, 0.30],
+    [0.30, 0.50], [0.50, 0.50], [0.70, 0.50],
+    [0.30, 0.70], [0.50, 0.70], [0.70, 0.70],
   ];
-  const radius = Math.max(1.5, cellSize * 0.06);
+  const radius = Math.max(1, cellSize * 0.07);
 
   for (let row = 0; row < 5; row++) {
     for (let col = 0; col < 16; col++) {
@@ -264,7 +304,7 @@ function sampleDataZone(
 
       const votes = new Map<number, { count: number; totalDist: number; confidence: number }>();
       for (const [ox, oy] of sampleOffsets) {
-        const sample = sampleCell(ctx, cellX + cellSize * ox, cellY + cellSize * oy, radius);
+        const sample = sampleCell(buf, cellX + cellSize * ox, cellY + cellSize * oy, radius);
         const match = matchToReference(sample, lut);
         const existing = votes.get(match.index);
         if (existing) {
