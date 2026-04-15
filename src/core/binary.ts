@@ -170,7 +170,9 @@ export function decodeColorData(nibbles: number[]): DecodedResult {
     phoneDigits += (bytes[i] & 0x0F).toString();
   }
   phoneDigits = phoneDigits.replace(/^0+/, '');
-  if (phoneDigits) result.phone = phoneDigits;
+  // Phone is BCD-encoded as international ICE format (no leading +), so on
+  // decode we restore the + prefix that the encoder strips at input time.
+  if (phoneDigits) result.phone = `+${phoneDigits}`;
 
   // Conditions (bytes 14-32)
   for (let bitIdx = 0; bitIdx < TOTAL_SELECTABLE_CONDITIONS; bitIdx++) {

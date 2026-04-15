@@ -88,7 +88,8 @@ export function decodeFromImage(
 
   const decoded = decodeColorData(nibbles);
   decoded.humanZone = humanZone;
-  // v3.0: name is printed externally, not carried inside the glyph.
+  // v3.0: name is printed externally. UI may call readExternalName() to OCR
+  // the region above the glyph after the fast data-decode has been shown.
   decoded.name = '';
 
   decoded.debug = {

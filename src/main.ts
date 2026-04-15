@@ -6,6 +6,7 @@ import { CONDITIONS, getConditionsForTier, getSubcategoriesForTier, SUBCATEGORY_
 import { renderGlyph } from './encoder/glyph-renderer';
 import { downloadPNG, downloadSVG, copyHexData } from './encoder/export';
 import { decodeFromImage } from './decoder/decode-pipeline';
+import { readExternalName } from './decoder/name-ocr';
 import { CameraManager } from './decoder/camera';
 
 // ── State ──
@@ -316,8 +317,7 @@ function initDecoder() {
   // Decode button
   $('decodeBtn').addEventListener('click', () => {
     if (decoderImageCanvas && decoderImageCtx) {
-      const result = decodeFromImage(decoderImageCanvas, decoderImageCtx);
-      displayDecodedData(result);
+      runDecode(decoderImageCanvas, decoderImageCtx);
     }
   });
 
@@ -387,8 +387,38 @@ function captureFromCamera() {
   $('decodeBtn').style.display = 'block';
 
   // Auto-decode
-  const result = decodeFromImage(canvas, ctx);
-  displayDecodedData(result);
+  runDecode(canvas, ctx);
+}
+
+/**
+ * Run the synchronous data decode immediately, then kick off external-name OCR
+ * in the background. The data results render right away; the name field shows
+ * a "Reading…" placeholder until OCR resolves.
+ */
+function runDecode(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
+  const decoded = decodeFromImage(canvas, ctx);
+  displayDecodedData(decoded);
+
+  const bounds = decoded.debug?.bounds as
+    | { minX: number; minY: number; maxX: number; maxY: number }
+    | undefined;
+  if (!bounds) return;
+
+  const nameEl = $('decodedName');
+  nameEl.textContent = 'Reading name\u2026';
+  readExternalName(canvas, bounds)
+    .then((res) => {
+      if (!res.attempted) {
+        nameEl.textContent = '\u2014';
+      } else if (res.name) {
+        nameEl.textContent = res.name;
+      } else {
+        nameEl.textContent = 'Name not detected';
+      }
+    })
+    .catch(() => {
+      nameEl.textContent = '\u2014';
+    });
 }
 
 function displayDecodedData(decoded: import('./core/types').DecodedResult) {
