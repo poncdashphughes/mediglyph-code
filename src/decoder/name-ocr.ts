@@ -100,7 +100,12 @@ function getTemplates(cellW: number, cellH: number): TemplateSet {
   return set;
 }
 
-/** Extract a binary "letter pixel" mask from a cell in the source image. */
+/**
+ * Extract a binary "letter pixel" mask from a cell in the source image.
+ * The mask is sized to match the template dimensions (integer w × h), with
+ * the cell interior inset by ~10% on each side so cell-border anti-aliasing
+ * does not contaminate the sample.
+ */
 function extractCellMask(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -108,24 +113,32 @@ function extractCellMask(
   w: number,
   h: number,
   letterIsBlack: boolean,
+  templateW: number,
+  templateH: number,
 ): { mask: Mask; count: number } {
-  const ix = Math.max(0, Math.round(x));
-  const iy = Math.max(0, Math.round(y));
-  const iw = Math.max(1, Math.round(w));
-  const ih = Math.max(1, Math.round(h));
-  const data = ctx.getImageData(ix, iy, iw, ih).data;
-  const n = iw * ih;
-  const mask = new Uint8Array(n);
+  const inset = 0.1;
+  const sx = Math.max(0, Math.round(x + w * inset));
+  const sy = Math.max(0, Math.round(y + h * inset));
+  const sw = Math.max(1, Math.round(w * (1 - inset * 2)));
+  const sh = Math.max(1, Math.round(h * (1 - inset * 2)));
+  const data = ctx.getImageData(sx, sy, sw, sh).data;
+
+  // Classify each source pixel, then map it into a template-sized mask.
+  // This keeps the mask shape comparable to the template even when the
+  // source cell was rendered at a slightly different scale.
+  const mask = new Uint8Array(templateW * templateH);
   let count = 0;
-  for (let i = 0; i < n; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
-    const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
-    const isLetter = letterIsBlack ? lum < 0.35 : lum > 0.7;
-    if (isLetter) {
-      mask[i] = 1;
-      count++;
+  for (let ty = 0; ty < templateH; ty++) {
+    const srcY = Math.min(sh - 1, Math.floor((ty / templateH) * sh));
+    for (let tx = 0; tx < templateW; tx++) {
+      const srcX = Math.min(sw - 1, Math.floor((tx / templateW) * sw));
+      const i = (srcY * sw + srcX) * 4;
+      const lum = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) / 255;
+      const isLetter = letterIsBlack ? lum < 0.5 : lum > 0.65;
+      if (isLetter) {
+        mask[ty * templateW + tx] = 1;
+        count++;
+      }
     }
   }
   return { mask, count };
@@ -155,7 +168,12 @@ export function ocrNameBlock(
 ): { name: string; confidence: number; perCell: Array<{ ch: string; score: number }> } {
   const templates = getTemplates(cellW, cellH);
   const cellAreaPx = templates.w * templates.h;
-  const spaceCutoff = Math.max(3, cellAreaPx * 0.02);
+  // A real letter at 17px on a 30×20 cell fills ~15–30% of the area. Anything
+  // under 8% is almost certainly noise from edge anti-aliasing — treat as space.
+  const spaceCutoff = Math.max(6, cellAreaPx * 0.08);
+  // If the best template match is still this weak, fall back to space rather
+  // than guess a letter from near-random pixels.
+  const minMatchScore = 0.2;
 
   const perCell: Array<{ ch: string; score: number }> = [];
   const chars: string[] = [];
@@ -169,7 +187,9 @@ export function ocrNameBlock(
 
       const cellX = startX + col * cellW;
       const cellY = startY + row * cellH;
-      const { mask, count } = extractCellMask(ctx, cellX, cellY, cellW, cellH, letterIsBlack);
+      const { mask, count } = extractCellMask(
+        ctx, cellX, cellY, cellW, cellH, letterIsBlack, templates.w, templates.h,
+      );
 
       // Empty-ish cell → space
       if (count < spaceCutoff) {
@@ -190,6 +210,14 @@ export function ocrNameBlock(
           bestCh = ch;
         }
       }
+
+      // Weak match → space
+      if (bestScore < minMatchScore) {
+        chars.push(' ');
+        perCell.push({ ch: ' ', score: bestScore });
+        continue;
+      }
+
       chars.push(bestCh);
       perCell.push({ ch: bestCh, score: bestScore });
     }
