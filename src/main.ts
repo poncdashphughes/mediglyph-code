@@ -273,7 +273,7 @@ function initExportButtons() {
   $('downloadPng').addEventListener('click', () => {
     const canvas = $('glyphCanvas') as HTMLCanvasElement;
     const safeName = patient.name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-    downloadPNG(canvas, `mediglyph-${safeName}.png`);
+    downloadPNG(canvas, `mediglyph-${safeName}.png`, patient.name);
   });
 
   $('downloadSvg').addEventListener('click', () => {
