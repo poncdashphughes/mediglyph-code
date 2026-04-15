@@ -6,7 +6,7 @@
  * https://poncdashphughes.github.io/mediglyph-code/
  */
 
-const CACHE_NAME = 'mediglyph-v2';
+const CACHE_NAME = 'mediglyph-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
