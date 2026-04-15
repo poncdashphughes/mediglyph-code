@@ -123,22 +123,54 @@ function findContentBounds(
   width: number,
   height: number,
 ): ContentBounds {
-  let minX = width, minY = height, maxX = 0, maxY = 0;
-  let found = false;
   const data = ctx.getImageData(0, 0, width, height).data;
+
+  // Pass 1: bound the highly-saturated pixels. The glyph is built from a
+  // 16-colour palette where most entries are vivid — the saturated region
+  // always lies inside the glyph and never inside printed greyscale text
+  // (the patient name above the glyph in v3.0 exports).
+  let sMinX = width, sMinY = height, sMaxX = 0, sMaxY = 0;
+  let found = false;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
-      if (data[idx] < 245 || data[idx + 1] < 245 || data[idx + 2] < 245) {
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+      if (chroma >= 40) {
         found = true;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
+        if (x < sMinX) sMinX = x;
+        if (y < sMinY) sMinY = y;
+        if (x > sMaxX) sMaxX = x;
+        if (y > sMaxY) sMaxY = y;
       }
     }
   }
-  return { found, minX, minY, maxX, maxY };
+  if (!found) return { found: false, minX: 0, minY: 0, maxX: 0, maxY: 0 };
+
+  // Pass 2: expand outward to include neighbouring B&W edge cells (Black,
+  // White, Grey, Silver are valid palette colours). Walk one row/column at
+  // a time and stop when an entire row/column is white — that gap separates
+  // the glyph from the printed name above it.
+  const isInk = (x: number, y: number): boolean => {
+    const i = (y * width + x) * 4;
+    return data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245;
+  };
+  const rowHasInk = (y: number, x0: number, x1: number): boolean => {
+    for (let x = x0; x <= x1; x++) if (isInk(x, y)) return true;
+    return false;
+  };
+  const colHasInk = (x: number, y0: number, y1: number): boolean => {
+    for (let y = y0; y <= y1; y++) if (isInk(x, y)) return true;
+    return false;
+  };
+
+  let minX = sMinX, minY = sMinY, maxX = sMaxX, maxY = sMaxY;
+  while (minY > 0 && rowHasInk(minY - 1, sMinX, sMaxX)) minY--;
+  while (maxY < height - 1 && rowHasInk(maxY + 1, sMinX, sMaxX)) maxY++;
+  while (minX > 0 && colHasInk(minX - 1, minY, maxY)) minX--;
+  while (maxX < width - 1 && colHasInk(maxX + 1, minY, maxY)) maxX++;
+
+  return { found: true, minX, minY, maxX, maxY };
 }
 
 function sampleHumanZone(
