@@ -13,7 +13,6 @@ import {
   type PaletteLUT,
   type RGB,
 } from './classify-color';
-import { ocrNameBlock } from './name-ocr';
 
 interface ContentBounds {
   found: boolean;
@@ -89,10 +88,8 @@ export function decodeFromImage(
 
   const decoded = decodeColorData(nibbles);
   decoded.humanZone = humanZone;
-
-  // OCR the name block (independent of the data grid payload)
-  const ocr = ocrNameBlock(ctx, nameBlockX, nameBlockY, nameBlockCellW, nameBlockCellH);
-  decoded.name = ocr.name;
+  // v3.0: name is printed externally, not carried inside the glyph.
+  decoded.name = '';
 
   decoded.debug = {
     ...(decoded.debug || {}),
@@ -100,7 +97,6 @@ export function decodeFromImage(
     layout: { t0Size, tSmallSize, dataCellSize, nameBlockCellW, nameBlockCellH },
     confidence,
     lut,
-    nameOcr: { confidence: ocr.confidence, perCell: ocr.perCell },
   };
   return decoded;
 }

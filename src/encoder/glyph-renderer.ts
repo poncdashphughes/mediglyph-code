@@ -1,12 +1,11 @@
 import type { PatientData } from '../core/types';
-import { PALETTE, TIER_COLOURS, getLuminance } from '../core/palette';
-import { encodePatientData, dataToColorCells, normaliseName } from '../core/binary';
+import { PALETTE, TIER_COLOURS } from '../core/palette';
+import { encodePatientData, dataToColorCells } from '../core/binary';
 import {
   createLayout,
   NAME_BLOCK_CALIBRATION,
   NAME_BLOCK_COLS,
   NAME_BLOCK_ROWS,
-  NAME_BLOCK_MAX_CHARS,
 } from '../core/glyph-layout';
 
 /**
@@ -31,7 +30,7 @@ export function renderGlyph(
 
   drawT0(ctx, L, patient);
   drawTierQuadrant(ctx, L, patient);
-  drawNameBlock(ctx, L, patient.name);
+  drawCalibrationBlock(ctx, L);
 
   const encodedData = encodePatientData(patient);
   const colorCells = dataToColorCells(encodedData);
@@ -96,36 +95,26 @@ function drawTierQuadrant(
   }
 }
 
-function drawNameBlock(
+/**
+ * Draw the 30-cell calibration block. v3.0 carries no name inside the glyph —
+ * the patient name is printed externally as normal typography alongside the
+ * glyph by the physical product (bracelet, card, sticker). These 30 cells are
+ * a fixed colour pattern covering every palette index, serving as the
+ * decoder's per-photograph colour-correction reference.
+ */
+function drawCalibrationBlock(
   ctx: CanvasRenderingContext2D,
   L: ReturnType<typeof createLayout>,
-  rawName: string,
 ) {
-  const name = normaliseName(rawName).padEnd(NAME_BLOCK_MAX_CHARS, ' ');
-
   for (let row = 0; row < NAME_BLOCK_ROWS; row++) {
     for (let col = 0; col < NAME_BLOCK_COLS; col++) {
       const idx = row * NAME_BLOCK_COLS + col;
       const paletteIdx = NAME_BLOCK_CALIBRATION[idx];
-      const colour = PALETTE[paletteIdx];
-
       const x = L.nameBlockX + col * L.nameBlockCellW;
       const y = L.nameBlockY + row * L.nameBlockCellH;
 
-      // Calibration-coloured background
-      ctx.fillStyle = colour.hex;
+      ctx.fillStyle = PALETTE[paletteIdx].hex;
       ctx.fillRect(x + 0.5, y + 0.5, L.nameBlockCellW - 1, L.nameBlockCellH - 1);
-
-      // Letter overlay (or blank for space)
-      const ch = name[idx];
-      if (ch && ch !== ' ') {
-        const lum = getLuminance(colour.rgb);
-        ctx.fillStyle = lum > 0.5 ? '#000000' : '#FFFFFF';
-        ctx.font = `bold ${L.nameBlockCellH * 0.85}px -apple-system, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ch, x + L.nameBlockCellW / 2, y + L.nameBlockCellH / 2 + 0.5);
-      }
     }
   }
 }
@@ -153,7 +142,6 @@ export function renderGlyphSVG(patient: PatientData): string {
   const L = createLayout(20);
   const encodedData = encodePatientData(patient);
   const colorCells = dataToColorCells(encodedData);
-  const name = normaliseName(patient.name).padEnd(NAME_BLOCK_MAX_CHARS, ' ');
 
   const parts: string[] = [];
   parts.push(
@@ -190,24 +178,16 @@ export function renderGlyphSVG(patient: PatientData): string {
     );
   });
 
-  // Name block
+  // Calibration block (no letters — name is printed externally)
   for (let row = 0; row < NAME_BLOCK_ROWS; row++) {
     for (let col = 0; col < NAME_BLOCK_COLS; col++) {
       const idx = row * NAME_BLOCK_COLS + col;
       const paletteIdx = NAME_BLOCK_CALIBRATION[idx];
-      const colour = PALETTE[paletteIdx];
       const x = L.nameBlockX + col * L.nameBlockCellW;
       const y = L.nameBlockY + row * L.nameBlockCellH;
       parts.push(
-        `<rect x="${x + 0.5}" y="${y + 0.5}" width="${L.nameBlockCellW - 1}" height="${L.nameBlockCellH - 1}" fill="${colour.hex}"/>`,
+        `<rect x="${x + 0.5}" y="${y + 0.5}" width="${L.nameBlockCellW - 1}" height="${L.nameBlockCellH - 1}" fill="${PALETTE[paletteIdx].hex}"/>`,
       );
-      const ch = name[idx];
-      if (ch && ch !== ' ') {
-        const lum = getLuminance(colour.rgb);
-        parts.push(
-          `<text x="${x + L.nameBlockCellW / 2}" y="${y + L.nameBlockCellH / 2 + 0.5}" text-anchor="middle" dominant-baseline="central" fill="${lum > 0.5 ? '#000' : '#FFF'}" font-size="${L.nameBlockCellH * 0.85}" font-weight="bold" font-family="sans-serif">${ch}</text>`,
-        );
-      }
     }
   }
 

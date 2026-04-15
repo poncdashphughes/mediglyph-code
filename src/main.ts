@@ -93,11 +93,13 @@ function initEncoderForm() {
   const bloodSelect = $('patientBlood') as HTMLSelectElement;
   const phoneInput = $('icePhone') as HTMLInputElement;
 
+  const nameLabel = document.getElementById('glyphNameLabel');
   const onChange = () => {
     patient.name = nameInput.value;
     patient.dob = dobInput.value;
     patient.blood = parseInt(bloodSelect.value);
     patient.phone = phoneInput.value;
+    if (nameLabel) nameLabel.textContent = patient.name || '\u00A0';
     updateGlyph();
   };
 
