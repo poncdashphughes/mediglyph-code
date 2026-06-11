@@ -83,64 +83,65 @@ function estimateBackground(
 }
 
 /**
- * Estimate the dominant rotation of the glyph from the principal axis of
- * its saturated pixels. Returns radians in (-π/4, π/4]; rotations larger
- * than that get folded into the range, which is fine — we do not try to
- * correct 90°/180° flips here.
+ * Estimate the glyph's rotation from the bottom edge of its saturated
+ * pixel cloud — the data grid's bottom row forms a long straight line
+ * spanning the full glyph width.
  *
- * Algorithm: 2×2 covariance of saturated-pixel coordinates → eigenvector
- * of the larger eigenvalue → angle from horizontal. The glyph is wider
- * than tall (24×14 mm) so the major axis is the horizontal axis and the
- * angle that returns it to horizontal is `-θ`.
+ * A principal-axis (covariance) estimate is unusable here: the glyph's
+ * mass distribution is asymmetric (calibration block top-right, triage
+ * squares top-left), which biases the major axis ~3° off-horizontal even
+ * for a perfectly straight image.
+ *
+ * For each sampled column we record the bottom-most saturated pixel,
+ * trim the outer columns (rotated corners), and take the Theil–Sen
+ * median slope — robust to the occasional outlier column.
  */
 function estimateRotation(
   data: Uint8ClampedArray,
   width: number,
   height: number,
 ): number {
-  // Subsample for speed — every 3rd pixel is enough to fit a covariance.
-  const step = 3;
-  let n = 0;
-  let sumX = 0, sumY = 0;
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      const i = (y * width + x) * 4;
-      const r = data[i], g = data[i + 1], b = data[i + 2];
-      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
-      if (chroma >= SATURATED_CHROMA) {
-        sumX += x;
-        sumY += y;
-        n++;
-      }
-    }
-  }
-  if (n < 50) return 0;
-  const cx = sumX / n;
-  const cy = sumY / n;
+  const step = 2;
+  const xs: number[] = [];
+  const ys: number[] = [];
 
-  let sxx = 0, syy = 0, sxy = 0;
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
+  for (let x = 0; x < width; x += step) {
+    for (let y = height - 1; y >= 0; y--) {
       const i = (y * width + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       const chroma = Math.max(r, g, b) - Math.min(r, g, b);
       if (chroma >= SATURATED_CHROMA) {
-        const dx = x - cx;
-        const dy = y - cy;
-        sxx += dx * dx;
-        syy += dy * dy;
-        sxy += dx * dy;
+        xs.push(x);
+        ys.push(y);
+        break;
       }
     }
   }
-  // Principal axis angle. atan2(2*Sxy, Sxx-Syy) / 2 is in (-π/2, π/2].
-  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  // Fold into (-π/4, π/4] so we only correct small tilts (the glyph is
-  // landscape-aspect, so the major axis is already near-horizontal).
-  let folded = theta;
-  while (folded > Math.PI / 4) folded -= Math.PI / 2;
-  while (folded <= -Math.PI / 4) folded += Math.PI / 2;
-  return folded;
+  if (xs.length < 30) return 0;
+
+  // Trim outer 15% of columns — rotated corners shorten the edge there
+  const trim = Math.floor(xs.length * 0.15);
+  const tx = xs.slice(trim, xs.length - trim);
+  const ty = ys.slice(trim, ys.length - trim);
+  if (tx.length < 20) return 0;
+
+  // Theil–Sen: median slope over sampled point pairs
+  const slopes: number[] = [];
+  const pairStep = Math.max(1, Math.floor(tx.length / 60));
+  for (let i = 0; i < tx.length; i += pairStep) {
+    for (let j = i + Math.floor(tx.length / 3); j < tx.length; j += pairStep) {
+      const dx = tx[j] - tx[i];
+      if (dx > 0) slopes.push((ty[j] - ty[i]) / dx);
+    }
+  }
+  if (slopes.length === 0) return 0;
+  slopes.sort((a, b) => a - b);
+  const slope = slopes[slopes.length >> 1];
+
+  const angle = Math.atan(slope);
+  // Only correct plausible hand-held tilts
+  if (Math.abs(angle) > Math.PI / 4) return 0;
+  return angle;
 }
 
 /** Rotate a canvas by `-angle` radians, returning a fresh canvas+ctx
@@ -171,13 +172,15 @@ function rotateCanvas(
 export function preprocessImage(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
+  opts: { allowRotation?: boolean } = {},
 ): PreprocessedImage {
   const w0 = canvas.width;
   const h0 = canvas.height;
   const data0 = ctx.getImageData(0, 0, w0, h0).data;
 
   const background = estimateBackground(data0, w0, h0);
-  const angle = estimateRotation(data0, w0, h0);
+  const allowRotation = opts.allowRotation !== false;
+  const angle = allowRotation ? estimateRotation(data0, w0, h0) : 0;
 
   if (Math.abs(angle) < ROTATION_THRESHOLD_RAD) {
     return {

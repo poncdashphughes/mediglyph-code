@@ -2,7 +2,7 @@
 
 Medical bracelets engrave a handful of words onto a strip of metal. Four conditions, maybe five if the text is small. For someone managing epilepsy, a drug allergy, a pacemaker, and a communication need, that bracelet is already full before it has said anything useful.
 
-MediglyphCode encodes up to **145 medical conditions** into an **18mm x 10mm** colour glyph. It is small enough to fit on a wristband, a card, or a sticker, and readable by any smartphone camera.
+MediglyphCode encodes up to **145 medical conditions** into a **24mm x 14mm** colour glyph. It is small enough to fit on a watch strap, a card, or a sticker, and readable by any smartphone camera — with Reed–Solomon error correction so a smudged or glared photo still decodes.
 
 **[Live demo](https://poncdashphughes.github.io/mediglyph-code/)**
 
@@ -31,51 +31,56 @@ The tier names follow clinical priority. T0 means stop and assess before proceed
 ### Glyph anatomy
 
 ```
-┌──────────────────────────────────────────┐
-│                                          │
-│  ┌─────────┐  ┌────┬────┐               │
-│  │         │  │ T1 │ T2 │  Human zone   │
-│  │   T0    │  ├────┼────┤  (visual       │
-│  │  PAUSE  │  │ T3 │ T4 │   triage)     │
-│  └─────────┘  └────┴────┘               │
-│                                          │
-│  P  E  T  E  R  H  U  G  H  E  S  0  …  │
-│  ┌──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬… │
-│  │  │  │  │  │  │  │  │  │  │  │  │  │  │
-│  ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼… │
-│  │  │  │  │  │  │  │  │  │  │  │  │  │  │  Data grid
-│  ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼… │  (16 × 5
-│  │  │  │  │  │  │  │  │  │  │  │  │  │  │   colour
-│  ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼──┼… │   cells)
-│  │  │  │  │  │  │  │  │  │  │  │  │  │  │
-│  └──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴… │
-│                                          │
-└──────────────────────────────────────────┘
++------------------------------------------------+
+| (patient name printed here by the product)     |
+|  +-----+ +--+--+  +----------------------+     |
+|  | T0  | |T1|T2|  |  Calibration block   |     |
+|  |PAUSE| +--+--+  |  (10 x 3 reference   |     |
+|  |     | |T3|T4|  |   colour cells)      |     |
+|  +-----+ +--+--+  +----------------------+     |
+|                                                |
+|  +------------------------------------------+  |
+|  |                                          |  |
+|  |   Data grid (16 x 5 colour cells,        |  |
+|  |   40 bytes, no text overlays)            |  |
+|  |                                          |  |
+|  +------------------------------------------+  |
++------------------------------------------------+
 ```
 
-The **human-readable zone** at the top provides immediate visual triage. Active tiers light up in their assigned colour. A red T0 square tells a paramedic there is a life-threatening condition before they reach for a phone.
+The **triage zone** at the top-left provides immediate visual triage. Active tiers light up in their assigned colour. A red T0 square tells a paramedic there is a life-threatening condition before they reach for a phone.
 
-The **data grid** below is a 16 x 5 matrix of colour cells. Each cell encodes a 4-bit nibble using a 16-colour palette, giving 80 nibbles (40 bytes) of structured binary data.
+The **calibration block** at the top-right is a fixed pattern of 30 reference cells covering all 16 palette colours. The decoder samples it to build a per-photograph colour-correction table, so lighting, white balance, and print drift are calibrated out before any data is read.
 
-### Binary format (v2.0)
+The **data grid** below is a 16 x 5 matrix of pure colour cells. Each cell encodes a 4-bit nibble, giving 80 nibbles (40 bytes) of structured binary data.
+
+The **patient name** is printed by the physical product as normal typography beside the glyph — it is not encoded in colour, which keeps the glyph a pure colour artefact and the decode path simple.
+
+### Binary format (v3.1)
 
 | Bytes | Field | Detail |
 |-------|-------|--------|
-| 0 | Version | `0x20` (v2.0) |
+| 0 | Version | `0x31` (v3.1) |
 | 1 | Flags | Tier presence bitmask |
-| 2–10 | Name | 12 characters, 6-bit packed |
-| 11–13 | Date of birth | YY/MM/DD |
-| 14 | Blood type | Index (A+, A-, B+, B-, AB+, AB-, O+, O-) |
-| 15–33 | Condition bitfield | 19 bytes (152 bits) for 145 conditions |
-| 34–39 | Phone (ICE) | 12 BCD-encoded digits |
+| 2–4 | Date of birth | YY/MM/DD |
+| 5 | Blood type | Index (A+, A-, B+, B-, AB+, AB-, O+, O-, Unknown) |
+| 6–7 | Reserved | Zero-filled |
+| 8–13 | Phone (ICE) | 12 BCD-encoded digits |
+| 14–32 | Condition bitfield | 19 bytes (152 bits) for 145 conditions |
+| 33–37 | Error correction | Reed–Solomon parity over bytes 0–32 |
+| 38–39 | Integrity | CRC-16/CCITT-FALSE over bytes 0–37 |
 
 Total: **40 bytes**, encoded as **80 colour cells** in a **16 x 5 grid**.
 
 ### Decoding
 
-Decoding works by photographing the glyph and sampling each colour cell using multi-point voting. Six sample points per cell with majority voting and confidence scoring make the decode resilient to camera angle, lighting, and reflections.
+Decoding works by photographing the glyph: the decoder estimates and corrects rotation, builds the colour-correction table from the calibration block, then samples each data cell at nine interior points with majority voting and confidence scoring.
+
+If cells are still misread, **Reed–Solomon error correction repairs up to 2 bytes outright — or up to 5 when the sampler flags the unreliable cells** — and the CRC confirms the repaired result. A single smudge, glare spot, or worn cell no longer kills the decode.
 
 No internet connection is required. The decoder runs entirely in the browser.
+
+Full format details are in [SPEC.md](SPEC.md).
 
 ## Encoding capacity
 
@@ -89,7 +94,7 @@ MediglyphCode covers the conditions most likely to affect emergency treatment de
 
 ## Tech stack
 
-- **Framework:** Vanilla TypeScript, no runtime dependencies
+- **Framework:** Vanilla TypeScript (tesseract.js for optional external-name OCR)
 - **Build:** Vite
 - **Deployment:** GitHub Pages with PWA support (offline-capable via service worker)
 - **Image processing:** Canvas API for rendering, camera API for decoding
@@ -99,6 +104,7 @@ MediglyphCode covers the conditions most likely to affect emergency treatment de
 ```bash
 npm install
 npm run dev
+npm test     # unit tests (binary format, error correction)
 ```
 
 The dev server runs on `http://localhost:3000`.
@@ -135,7 +141,7 @@ If you are building something with MediglyphCode and are unsure whether your use
 
 ## Status
 
-MediglyphCode is a working proof of concept. The encoder and decoder are functional, the specification is stable at v2.0, and the system has been tested across a range of conditions and device cameras. It has **not** been clinically validated. It is not a medical device. Do not rely on it for clinical decisions without independent verification.
+MediglyphCode is a working proof of concept. The encoder and decoder are functional, and the specification is at draft v3.1 (see SPEC.md) with Reed–Solomon error correction, a per-photograph colour-calibration block, and externally printed patient names. It has **not** been clinically validated. It is not a medical device. Do not rely on it for clinical decisions without independent verification.
 
 ## Contact
 

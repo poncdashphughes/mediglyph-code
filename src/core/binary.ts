@@ -1,30 +1,40 @@
 import type { PatientData, DecodedResult } from './types';
 import { BLOOD_TYPES } from './palette';
 import { CONDITIONS_MAP, CONDITION_BIT_INDEX, BIT_INDEX_TO_CODE, TOTAL_SELECTABLE_CONDITIONS } from './conditions';
+import { rsEncode, rsDecode } from './reed-solomon';
 
 /**
- * MediglyphCode v3.0 binary format.
+ * MediglyphCode v3.1 binary format.
  *
  * 40 bytes = 80 nibbles = 16×5 colour grid.
  *
  * Byte map:
- *   0      Version (0x30)
+ *   0      Version (0x31)
  *   1      Flags (tier presence bitmask, bits 0-4 = T0-T4)
  *   2-4    DOB (YY, MM, DD)
  *   5      Blood type index
  *   6-7    Reserved (0)
  *   8-13   Phone (12 BCD digits, 6 bytes)
  *   14-32  Condition bitfield (19 bytes, 152 bits for 145 conditions)
- *   33-37  Reserved (0)
+ *   33-37  Reed–Solomon parity over bytes 0-32 (v3.0 left these zero)
  *   38-39  CRC-16/CCITT-FALSE over bytes 0-37
  *
- * Name is carried in the Human Zone name block, NOT in this data grid.
+ * The parity bytes give the decoder real error *correction*: up to 2
+ * misread bytes anywhere in 0-37 are repaired (up to 5 when the sampler
+ * flags the unreliable cells as erasures). The CRC stays the final
+ * arbiter, and because it still covers bytes 0-37 — parity included —
+ * deployed v3.0 decoders read v3.1 glyphs unchanged.
+ *
+ * Name is printed by the physical product, NOT carried in the grid.
  */
 
 export const VERSION_V3 = 0x30;
+export const VERSION_V31 = 0x31;
 const PHONE_BYTES = 6;
 const BITFIELD_BYTES = 19;
 const DATA_BYTES = 40;
+const RS_DATA_BYTES = 33;   // bytes 0-32
+const RS_PARITY_BYTES = 5;  // bytes 33-37
 
 /** CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection, no xor-out). */
 export function crc16(bytes: number[]): number {
@@ -48,12 +58,12 @@ export function normaliseName(name: string): string {
     .substring(0, 30);
 }
 
-/** Encode patient data into the 40-byte v3.0 payload. */
+/** Encode patient data into the 40-byte v3.1 payload. */
 export function encodePatientData(patient: PatientData): number[] {
   const data = new Array<number>(DATA_BYTES).fill(0);
 
   // Byte 0: Version
-  data[0] = VERSION_V3;
+  data[0] = VERSION_V31;
 
   // Byte 1: Flags
   let flags = 0;
@@ -104,7 +114,11 @@ export function encodePatientData(patient: PatientData): number[] {
     }
   }
 
-  // Bytes 33-37: Reserved (0)
+  // Bytes 33-37: Reed–Solomon parity over bytes 0-32
+  const parity = rsEncode(data.slice(0, RS_DATA_BYTES), RS_PARITY_BYTES).slice(RS_DATA_BYTES);
+  for (let i = 0; i < RS_PARITY_BYTES; i++) {
+    data[RS_DATA_BYTES + i] = parity[i];
+  }
 
   // Bytes 38-39: CRC-16 over bytes 0-37 (big-endian)
   const crc = crc16(data.slice(0, 38));
@@ -125,13 +139,68 @@ export function dataToColorCells(data: number[]): number[] {
   return cells.slice(0, 80); // 16×5
 }
 
-/** Decode 80 nibbles back into patient data. Name is filled from the human zone separately. */
-export function decodeColorData(nibbles: number[]): DecodedResult {
-  const bytes: number[] = [];
+/**
+ * Decode 80 nibbles back into patient data. Name is filled from the human
+ * zone separately.
+ *
+ * suspectBytes optionally lists byte positions the sampler read with low
+ * confidence — they are passed to Reed–Solomon as erasures, which doubles
+ * correction power at exactly those positions.
+ */
+export function decodeColorData(nibbles: number[], suspectBytes?: Set<number>): DecodedResult {
+  let bytes: number[] = [];
   for (let i = 0; i < nibbles.length; i += 2) {
     bytes.push(((nibbles[i] & 0x0F) << 4) | (nibbles[i + 1] ?? 0) & 0x0F);
   }
   while (bytes.length < DATA_BYTES) bytes.push(0);
+
+  const checkCrc = (b: number[]) =>
+    (((b[38] << 8) | b[39]) === crc16(b.slice(0, 38)));
+
+  let crcOk = checkCrc(bytes);
+  let correctedBytes = 0;
+  let rsRecovered = false;
+  let warning: string | undefined;
+
+  if (!crcOk) {
+    // v3.1 glyphs carry RS parity in bytes 33-37 — attempt repair.
+    // (On v3.0 glyphs the parity bytes are zero, which is not a valid
+    // codeword for non-trivial data, so recovery simply fails and the
+    // outcome matches the old behaviour.)
+    const codeword = bytes.slice(0, RS_DATA_BYTES + RS_PARITY_BYTES);
+    const erasures = suspectBytes
+      ? [...suspectBytes].filter(p => p >= 0 && p < codeword.length)
+      : [];
+
+    let res = erasures.length > 0 && erasures.length <= RS_PARITY_BYTES
+      ? rsDecode(codeword, RS_PARITY_BYTES, erasures)
+      : null;
+    if (!res) res = rsDecode(codeword, RS_PARITY_BYTES);
+
+    if (res) {
+      const repaired = [
+        ...res.data,
+        ...rsEncode(res.data, RS_PARITY_BYTES).slice(RS_DATA_BYTES),
+        bytes[38],
+        bytes[39],
+      ];
+      if (checkCrc(repaired)) {
+        bytes = repaired;
+        crcOk = true;
+        correctedBytes = res.corrected;
+        rsRecovered = correctedBytes > 0;
+      } else if (repaired[0] === VERSION_V31) {
+        // The codeword is RS-valid but the stored CRC disagrees: the CRC
+        // cells themselves sit outside RS coverage, so they are the
+        // damaged ones. Accept the data, but say so.
+        bytes = repaired;
+        crcOk = true;
+        correctedBytes = res.corrected;
+        rsRecovered = true;
+        warning = 'CRC cells unreadable — data validated by error correction only';
+      }
+    }
+  }
 
   const result: DecodedResult = {
     version: bytes[0],
@@ -146,10 +215,8 @@ export function decodeColorData(nibbles: number[]): DecodedResult {
     phone: '',
   };
 
-  // CRC check
   const storedCrc = (bytes[38] << 8) | bytes[39];
   const computedCrc = crc16(bytes.slice(0, 38));
-  const crcOk = storedCrc === computedCrc;
 
   // DOB (bytes 2-4)
   const yy = bytes[2];
@@ -191,7 +258,9 @@ export function decodeColorData(nibbles: number[]): DecodedResult {
     }
   }
 
-  result.debug = { crcOk, storedCrc, computedCrc };
+  result.correctedBytes = correctedBytes;
+  if (warning) result.warning = warning;
+  result.debug = { crcOk, storedCrc, computedCrc, correctedBytes, rsRecovered };
   if (!crcOk) result.error = 'CRC mismatch — data may be corrupt';
 
   return result;

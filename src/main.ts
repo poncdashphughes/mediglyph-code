@@ -454,6 +454,28 @@ function displayDecodedData(decoded: import('./core/types').DecodedResult) {
     `;
   }
 
+  if (decoded.warning) {
+    tiersEl.innerHTML += `
+      <div class="decoded-tier" style="background: rgba(232,125,26,0.1); border-left: 3px solid var(--tier-1);">
+        <div class="decoded-tier-content">
+          <div class="decoded-tier-label">Warning</div>
+          <div class="decoded-tier-value">${decoded.warning}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (!decoded.error && (decoded.correctedBytes ?? 0) > 0) {
+    tiersEl.innerHTML += `
+      <div class="decoded-tier" style="background: rgba(26,140,90,0.1); border-left: 3px solid var(--tier-4);">
+        <div class="decoded-tier-content">
+          <div class="decoded-tier-label">Error correction</div>
+          <div class="decoded-tier-value">Repaired ${decoded.correctedBytes} byte${decoded.correctedBytes !== 1 ? 's' : ''} — data verified</div>
+        </div>
+      </div>
+    `;
+  }
+
   // Human Zone status
   if (decoded.humanZone) {
     const hz = decoded.humanZone;
@@ -512,3 +534,151 @@ function displayDecodedData(decoded: import('./core/types').DecodedResult) {
   // Debug
   $('debugPre').textContent = JSON.stringify(decoded, null, 2);
 }
+
+// ── Browser Test Harness (callable from console) ──
+// Exercises the full render → photograph → decode pixel pipeline, which
+// Node unit tests can't reach. Each function returns a structured result.
+
+import { createLayout as harnessLayout } from './core/glyph-layout';
+
+const TEST_PATIENT: PatientData = {
+  name: 'TEST PATIENT',
+  dob: '1985-06-15',
+  blood: 2,
+  tier0: ['00', '05'],
+  tier1: ['10', '20'],
+  tier2: ['40'],
+  tier3: ['70'],
+  phone: '+447700900123',
+};
+
+interface MediHarnessResult {
+  ok: boolean;
+  crcOk: boolean;
+  correctedBytes: number;
+  fieldsMatch: Record<string, boolean>;
+  warning?: string;
+  error?: string;
+}
+
+function summariseMediDecode(decoded: import('./core/types').DecodedResult): MediHarnessResult {
+  const fieldsMatch = {
+    dob: decoded.dob === TEST_PATIENT.dob,
+    blood: decoded.blood === BLOOD_TYPES[TEST_PATIENT.blood],
+    phone: decoded.phone === TEST_PATIENT.phone,
+    tier0: decoded.tier0.length === TEST_PATIENT.tier0.length,
+    tier1: decoded.tier1.length === TEST_PATIENT.tier1.length,
+    tier2: decoded.tier2.length === TEST_PATIENT.tier2.length,
+    tier3: decoded.tier3.length === TEST_PATIENT.tier3.length,
+  };
+  const crcOk = !!(decoded.debug?.crcOk as boolean);
+  return {
+    ok: crcOk && Object.values(fieldsMatch).every(Boolean),
+    crcOk,
+    correctedBytes: decoded.correctedBytes ?? 0,
+    fieldsMatch,
+    warning: decoded.warning,
+    error: decoded.error,
+  };
+}
+
+function renderHarnessGlyph(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  renderGlyph(canvas, TEST_PATIENT);
+  return canvas;
+}
+
+/** Clean render → decode round trip */
+(window as any).testRoundTrip = function (): MediHarnessResult {
+  const canvas = renderHarnessGlyph();
+  return summariseMediDecode(decodeFromImage(canvas, canvas.getContext('2d')!));
+};
+
+/** Paint N random data cells the wrong colour, then decode (RS recovery) */
+(window as any).testCorruption = function (nCells = 2): MediHarnessResult {
+  const canvas = renderHarnessGlyph();
+  const ctx = canvas.getContext('2d')!;
+  const L = harnessLayout(20);
+
+  const wrong = ['#000000', '#E8D31A', '#1A8C5A', '#7D3DAD', '#F2A0B8'];
+  const chosen = new Set<number>();
+  while (chosen.size < Math.min(nCells, 80)) {
+    chosen.add(Math.floor(Math.random() * 80));
+  }
+  for (const idx of chosen) {
+    const row = Math.floor(idx / 16);
+    const col = idx % 16;
+    ctx.fillStyle = wrong[Math.floor(Math.random() * wrong.length)];
+    ctx.fillRect(
+      L.dataZoneX + col * L.dataCellSize,
+      L.dataZoneY + row * L.dataCellSize,
+      L.dataCellSize,
+      L.dataCellSize,
+    );
+  }
+  return summariseMediDecode(decodeFromImage(canvas, ctx));
+};
+
+/**
+ * Paint N data cells with an off-palette "smudge" colour. Unlike
+ * testCorruption's clean wrong-colours, smudged cells classify with low
+ * confidence, so the decoder flags them as erasures — recovery capacity
+ * is 5 flagged bytes vs 2 confidently-wrong ones.
+ */
+(window as any).testSmudge = function (nCells = 4): MediHarnessResult {
+  const canvas = renderHarnessGlyph();
+  const ctx = canvas.getContext('2d')!;
+  const L = harnessLayout(20);
+
+  // Pick cells in distinct bytes so each smudge costs one erasure
+  const chosen = new Set<number>();
+  while (chosen.size < Math.min(nCells, 40)) {
+    chosen.add(Math.floor(Math.random() * 40) * 2);
+  }
+  for (const idx of chosen) {
+    const row = Math.floor(idx / 16);
+    const col = idx % 16;
+    ctx.fillStyle = '#A0A050'; // murky olive — far from every palette entry
+    ctx.fillRect(
+      L.dataZoneX + col * L.dataCellSize,
+      L.dataZoneY + row * L.dataCellSize,
+      L.dataCellSize,
+      L.dataCellSize,
+    );
+  }
+  return summariseMediDecode(decodeFromImage(canvas, ctx));
+};
+
+/** Simulated photo: glyph drawn rotated and scaled on an off-white background */
+(window as any).testRotated = function (deg = 3, scale = 0.8): MediHarnessResult {
+  const glyph = renderHarnessGlyph();
+  const photo = document.createElement('canvas');
+  photo.width = 800;
+  photo.height = 500;
+  const pctx = photo.getContext('2d')!;
+  pctx.fillStyle = '#F2EEE8'; // off-white plastic / paper
+  pctx.fillRect(0, 0, photo.width, photo.height);
+  pctx.save();
+  pctx.translate(photo.width / 2, photo.height / 2);
+  pctx.rotate((deg * Math.PI) / 180);
+  pctx.scale(scale, scale);
+  pctx.drawImage(glyph, -glyph.width / 2, -glyph.height / 2);
+  pctx.restore();
+  return summariseMediDecode(decodeFromImage(photo, pctx));
+};
+
+/** Battery across the harness scenarios */
+(window as any).testAll = function (): Record<string, MediHarnessResult> {
+  const t = window as any;
+  return {
+    roundtrip: t.testRoundTrip(),
+    // Confidently-wrong cells: guaranteed recovery up to 2 bytes
+    corrupt1: t.testCorruption(1),
+    corrupt2: t.testCorruption(2),
+    // Low-confidence smudges: recovered as erasures, up to 5 bytes
+    smudge4: t.testSmudge(4),
+    smudge5: t.testSmudge(5),
+    rotated2: t.testRotated(2),
+    rotated4: t.testRotated(4),
+  };
+};

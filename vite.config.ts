@@ -9,6 +9,6 @@ export default defineConfig(({ command }) => ({
     assetsDir: 'assets',
   },
   server: {
-    port: 3000,
+    port: parseInt(process.env.PORT || '3000'),
   },
 }));

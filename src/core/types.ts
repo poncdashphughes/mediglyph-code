@@ -21,6 +21,10 @@ export interface DecodedResult {
   tier3: string[];
   phone: string;
   humanZone?: HumanZoneResult;
+  /** Bytes repaired by Reed–Solomon (v3.1 glyphs; 0 for clean reads) */
+  correctedBytes?: number;
+  /** Set when data was recovered but could not be fully CRC-confirmed */
+  warning?: string;
   error?: string;
   debug?: Record<string, unknown>;
 }

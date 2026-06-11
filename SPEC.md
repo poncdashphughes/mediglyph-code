@@ -1,7 +1,7 @@
-# MediglyphCode Specification v3.0
+# MediglyphCode Specification v3.1
 
 **Status:** Draft
-**Supersedes:** v2.0 (breaking change)
+**Supersedes:** v3.0 (compatible extension — adds error correction in the reserved bytes), which superseded v2.0 (breaking change)
 **Physical size:** 24mm × 14mm (watch-strap, top-of-wrist)
 
 ## 1. Design principles
@@ -88,21 +88,37 @@ Pure colour cells. No letters. 80 nibbles × 4 bits = 320 bits = 40 bytes.
 
 | Bytes   | Field             | Detail                                            |
 |---------|-------------------|---------------------------------------------------|
-| 0       | Version           | `0x30` (v3.0)                                     |
+| 0       | Version           | `0x31` (v3.1)                                     |
 | 1       | Flags             | Tier presence bitmask (bits 0–4 = T0–T4)          |
 | 2–4     | Date of birth     | YY / MM / DD                                      |
 | 5       | Blood type        | Index into `BLOOD_TYPES`                          |
 | 6–7     | Reserved          | Zero-filled                                       |
 | 8–13    | Phone (ICE)       | 12 BCD digits                                     |
 | 14–32   | Condition bitfield| 19 bytes (152 bits) for 145 conditions            |
-| 33–37   | Reserved          | Zero-filled                                       |
+| 33–37   | RS parity         | Reed–Solomon parity over bytes 0–32 (zero in v3.0)|
 | 38–39   | CRC-16            | CRC-16/CCITT-FALSE over bytes 0–37                |
 
-Row 1 of the data grid (bytes 0–7) carries the header; rows 2–5 (bytes 8–39) carry phone, conditions, reserved, and CRC.
+Row 1 of the data grid (bytes 0–7) carries the header; rows 2–5 (bytes 8–39) carry phone, conditions, parity, and CRC.
 
 ### 4.2 CRC
 
-CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no reflection, no XOR-out). Computed over bytes 0–37 at encode time, stored big-endian in bytes 38–39. Decoder verifies and rejects on mismatch.
+CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no reflection, no XOR-out). Computed over bytes 0–37 at encode time — parity bytes included — stored big-endian in bytes 38–39. The CRC is the final arbiter of decode validity.
+
+### 4.3 Error correction (v3.1)
+
+Bytes 33–37 carry five Reed–Solomon parity bytes over GF(2⁸) (primitive polynomial `0x11D`, generator `α = 2` — the QR-code field), computed over data bytes 0–32. The codeword is bytes 0–37: 33 data + 5 parity.
+
+**Correction capacity:** up to 2 misread bytes at unknown positions, or up to 5 bytes at known-suspect positions (erasures), with mixes bounded by `2e + f ≤ 5`. The decoder treats data cells whose colour classification has low confidence as erasures, so realistic damage — glare, smudges, blur — gets the higher budget.
+
+**Decode order:**
+
+1. Verify CRC. On match, accept (fast path — also how v3.0 glyphs decode).
+2. On mismatch, attempt RS correction of bytes 0–37, first with the sampler's erasure hints, then errors-only.
+3. Re-verify the stored CRC against the corrected codeword. On match, accept and report the number of repaired bytes.
+4. If the corrected codeword is RS-valid but the stored CRC still disagrees, the CRC cells themselves (which sit outside RS coverage) are the damaged ones: accept the data with an explicit warning that it was validated by error correction only. This path requires the corrected version byte to read `0x31`.
+5. Otherwise reject with a CRC error, exactly as v3.0 did.
+
+**Compatibility:** v3.0 decoders ignore bytes 33–37 and verify the CRC over 0–37, so they read v3.1 glyphs unchanged. v3.1 decoders read v3.0 glyphs through the fast path; a damaged v3.0 glyph cannot be "repaired" into garbage because its zeroed parity is not a valid codeword and the recovered output must still satisfy the stored CRC.
 
 ## 5. Decode pipeline
 
@@ -110,9 +126,11 @@ CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no reflection, no XOR-out). Co
 2. **Orient** using the asymmetric top zone as fiducial (T0 square on the left, name block on the right).
 3. **Sample calibration cells** — the 30 known-colour cells in the top-right block.
 4. **Build LUT** — for each of the 16 palette colours, compute the mean observed RGB from its calibration cells (1 or 2 samples each). This becomes the per-glyph reference palette.
-5. **Classify data cells** — for each of the 80 data cells, sample 6 interior points, majority-vote the match against the calibrated palette.
-6. **Verify CRC.** If fails, still return the data but flag an error.
+5. **Classify data cells** — for each of the 80 data cells, sample 9 interior points, majority-vote the match against the calibrated palette, and record per-cell confidence.
+6. **Verify and repair** — check the CRC; on mismatch, attempt Reed–Solomon correction (low-confidence cells as erasures) per §4.3, then re-verify. Only flag an error when repair fails too.
 7. **Name** is not decoded — the decoder returns `name: ''`. Consuming applications should display the name from the photograph itself (printed adjacent to the glyph by the physical product) or from external records.
+
+Rotation handling: the preprocessor estimates tilt from the bottom edge of the saturated pixel cloud (Theil–Sen median slope) and de-rotates when the tilt exceeds 1°. If a decode attempt with rotation correction fails to validate, the decoder retries without it — a misestimated angle must never break an image that was straight to begin with.
 
 ## 6. Breaking changes from v2.0
 
@@ -124,8 +142,7 @@ CRC-16/CCITT-FALSE (poly `0x1021`, init `0xFFFF`, no reflection, no XOR-out). Co
 - CRC-16 added at the end.
 - Physical size grows from 18×10mm to 24×14mm.
 
-## 7. Open questions (post-v3.0)
+## 7. Open questions (post-v3.1)
 
-- Short "handle" field (8 chars) in the reserved bytes for applications that may receive glyph-only crops without surrounding name text.
-- 5-bit palette (32 colours) now viable thanks to calibration. Would double data capacity.
-- Error-correction (Reed–Solomon) layer in the reserved bytes.
+- Short "handle" field in bytes 6–7 for applications that may receive glyph-only crops without surrounding name text. (Bytes 33–37 are no longer available — v3.1 spent them on error correction.)
+- 5-bit palette (32 colours) now viable thanks to calibration. Would double data capacity, some of which could buy deeper RS parity.

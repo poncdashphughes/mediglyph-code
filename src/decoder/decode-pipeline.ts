@@ -40,7 +40,25 @@ export function decodeFromImage(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
 ): DecodedResult {
-  const pre = preprocessImage(canvas, ctx);
+  // First attempt: rotation correction on. If the decode doesn't validate,
+  // retry without de-rotation — a misestimated angle (busy photo
+  // backgrounds can confuse the edge fit) must never be able to break an
+  // image that was straight to begin with.
+  const withRotation = decodeAttempt(canvas, ctx, true);
+  if (!withRotation.error) return withRotation;
+
+  const withoutRotation = decodeAttempt(canvas, ctx, false);
+  if (!withoutRotation.error) return withoutRotation;
+
+  return withRotation;
+}
+
+function decodeAttempt(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  allowRotation: boolean,
+): DecodedResult {
+  const pre = preprocessImage(canvas, ctx, { allowRotation });
   const buf: ImageBuffer = { data: pre.data, width: pre.width, height: pre.height };
 
   const bounds = findContentBounds(buf, pre.background);
@@ -87,7 +105,7 @@ export function decodeFromImage(
   const lut = buildCalibrationLUT(NAME_BLOCK_CALIBRATION, calibSamples);
 
   // Sample data grid against the LUT
-  const { nibbles, confidence } = sampleDataZone(
+  const { nibbles, confidence, cellConfidences } = sampleDataZone(
     buf,
     dataZoneX,
     dataZoneY,
@@ -95,7 +113,20 @@ export function decodeFromImage(
     lut,
   );
 
-  const decoded = decodeColorData(nibbles);
+  // Bytes whose cells sampled with low confidence become RS erasures —
+  // known-suspect positions double the correction power (v3.1 glyphs).
+  // The 0.6 cutoff includes the medium-confidence band (palette distance
+  // 60-100): genuinely damaged cells land there, and over-flagging is
+  // harmless because the decoder falls back to errors-only when the
+  // erasure list exceeds parity capacity.
+  const suspectBytes = new Set<number>();
+  for (let i = 0; i < 40; i++) {
+    const c0 = cellConfidences[i * 2] ?? 0;
+    const c1 = cellConfidences[i * 2 + 1] ?? 0;
+    if (Math.min(c0, c1) < 0.6) suspectBytes.add(i);
+  }
+
+  const decoded = decodeColorData(nibbles, suspectBytes);
   decoded.humanZone = humanZone;
   // v3.0: name is printed externally. UI may call readExternalName() to OCR
   // the region above the glyph after the fast data-decode has been shown.
@@ -284,7 +315,7 @@ function sampleDataZone(
   startY: number,
   cellSize: number,
   lut: PaletteLUT,
-): { nibbles: number[]; confidence: number } {
+): { nibbles: number[]; confidence: number; cellConfidences: number[] } {
   const nibbles: number[] = [];
   const confidences: number[] = [];
 
@@ -337,5 +368,5 @@ function sampleDataZone(
   const avgConfidence = confidences.length
     ? confidences.reduce((a, b) => a + b, 0) / confidences.length
     : 0;
-  return { nibbles, confidence: avgConfidence };
+  return { nibbles, confidence: avgConfidence, cellConfidences: confidences };
 }
