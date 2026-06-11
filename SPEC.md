@@ -146,3 +146,5 @@ Rotation handling: the preprocessor estimates tilt from the bottom edge of the s
 
 - Short "handle" field in bytes 6–7 for applications that may receive glyph-only crops without surrounding name text. (Bytes 33–37 are no longer available — v3.1 spent them on error correction.)
 - 5-bit palette (32 colours) now viable thanks to calibration. Would double data capacity, some of which could buy deeper RS parity.
+
+Both are addressed in the next-version proposal: see [SPEC-v4-draft.md](SPEC-v4-draft.md) (self-contained critical row, initials field, anchor bars for curved-band decoding, deeper parity, scale-conditional letter overlays).
