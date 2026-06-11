@@ -40,17 +40,52 @@ export function decodeFromImage(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
 ): DecodedResult {
-  // First attempt: rotation correction on. If the decode doesn't validate,
-  // retry without de-rotation — a misestimated angle (busy photo
-  // backgrounds can confuse the edge fit) must never be able to break an
-  // image that was straight to begin with.
-  const withRotation = decodeAttempt(canvas, ctx, true);
-  if (!withRotation.error) return withRotation;
+  // A wrist arrives at any angle. Try the four cardinal orientations —
+  // upright first, then upside-down (the common wrist case), then the
+  // sides — and within each, rotation correction on then off. A
+  // misestimated tilt angle must never break an image that was straight
+  // to begin with. The first validated decode wins.
+  let firstAttempt: DecodedResult | null = null;
 
-  const withoutRotation = decodeAttempt(canvas, ctx, false);
-  if (!withoutRotation.error) return withoutRotation;
+  for (const quarter of [0, 2, 1, 3]) {
+    const target = quarter === 0 ? { canvas, ctx } : rotateQuarterTurns(canvas, quarter);
 
-  return withRotation;
+    const withRotation = decodeAttempt(target.canvas, target.ctx, true);
+    if (!withRotation.error) return noteOrientation(withRotation, quarter);
+
+    const withoutRotation = decodeAttempt(target.canvas, target.ctx, false);
+    if (!withoutRotation.error) return noteOrientation(withoutRotation, quarter);
+
+    if (!firstAttempt) firstAttempt = withRotation;
+  }
+
+  return firstAttempt!;
+}
+
+/** Rotate a canvas by quarter * 90° clockwise onto a fresh canvas */
+function rotateQuarterTurns(
+  src: HTMLCanvasElement,
+  quarter: number,
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  const w = src.width;
+  const h = src.height;
+  const swap = quarter % 2 === 1;
+  const out = document.createElement('canvas');
+  out.width = swap ? h : w;
+  out.height = swap ? w : h;
+  const ctx = out.getContext('2d', { willReadFrequently: true })!;
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate((quarter * Math.PI) / 2);
+  ctx.drawImage(src, -w / 2, -h / 2);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return { canvas: out, ctx };
+}
+
+function noteOrientation(result: DecodedResult, quarter: number): DecodedResult {
+  if (quarter !== 0) {
+    result.debug = { ...(result.debug || {}), orientation: quarter * 90 };
+  }
+  return result;
 }
 
 function decodeAttempt(
@@ -140,6 +175,10 @@ function decodeAttempt(
     lut,
     rotation: pre.rotation,
     background: pre.background,
+    // Raw samples for multi-frame fusion: a continuous scanner can
+    // combine these across frames even when no single frame validates
+    nibbles,
+    cellConfidences,
     // Hand the rotated canvas back so external-name OCR crops from the same
     // de-rotated frame the decoder used. Otherwise the bounds would point at
     // the wrong region of the original photo.

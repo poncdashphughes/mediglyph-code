@@ -6,6 +6,8 @@ import { CONDITIONS, getConditionsForTier, getSubcategoriesForTier, SUBCATEGORY_
 import { renderGlyph } from './encoder/glyph-renderer';
 import { downloadPNG, downloadSVG, copyHexData } from './encoder/export';
 import { decodeFromImage } from './decoder/decode-pipeline';
+import { FrameFusion } from './decoder/frame-fusion';
+import { decodeColorData } from './core/binary';
 import { readExternalName } from './decoder/name-ocr';
 import { CameraManager } from './decoder/camera';
 
@@ -350,32 +352,114 @@ function loadImageFile(file: File) {
 }
 
 async function toggleCamera() {
-  const section = $('cameraSection');
-  const btn = $('toggleCamera');
-
   if (camera?.isActive) {
-    camera.stop();
-    section.style.display = 'none';
-    btn.textContent = 'Open Camera';
-    $('captureBtn').style.display = 'none';
-    $('switchCamera').style.display = 'none';
+    closeCameraUI();
   } else {
     try {
       const video = $('cameraVideo') as HTMLVideoElement;
       camera = new CameraManager(video);
       await camera.start();
-      section.style.display = 'block';
-      btn.textContent = 'Close Camera';
+      $('cameraSection').style.display = 'block';
+      $('toggleCamera').textContent = 'Close Camera';
       $('captureBtn').style.display = '';
       $('switchCamera').style.display = '';
+      startContinuousScan();
     } catch (err) {
       alert(`Camera error: ${(err as Error).message}`);
     }
   }
 }
 
+function closeCameraUI() {
+  stopContinuousScan();
+  camera?.stop();
+  $('cameraSection').style.display = 'none';
+  $('toggleCamera').textContent = 'Open Camera';
+  $('captureBtn').style.display = 'none';
+  $('switchCamera').style.display = 'none';
+  $('scanStatus').style.display = 'none';
+}
+
+// ── Continuous Scanning ──
+// Decode every few hundred ms while the camera is open. Most scans
+// succeed on a single frame; when they don't, per-cell colour votes are
+// fused across recent frames so a sequence of marginal frames can
+// validate even though no individual frame does.
+
+let scanTimer: number | null = null;
+const fusion = new FrameFusion();
+
+function startContinuousScan() {
+  stopContinuousScan();
+  fusion.reset();
+  const status = $('scanStatus');
+  status.style.display = 'block';
+  status.textContent = 'Scanning…';
+  let frames = 0;
+
+  const tick = () => {
+    if (!camera?.isActive) return;
+    frames++;
+
+    const { canvas, ctx } = camera.captureFrame();
+    const result = decodeFromImage(canvas, ctx);
+
+    let accepted: import('./core/types').DecodedResult | null = null;
+    if (!result.error) {
+      accepted = result;
+    } else {
+      const dbg = (result.debug ?? {}) as Record<string, unknown>;
+      const nibbles = dbg.nibbles as number[] | undefined;
+      const cellConfidences = dbg.cellConfidences as number[] | undefined;
+      if (nibbles && cellConfidences) {
+        fusion.addFrame(nibbles, cellConfidences);
+        const cons = fusion.consensus();
+        if (cons) {
+          const fused = decodeColorData(cons.nibbles, cons.suspectBytes);
+          if (!fused.error) {
+            // Carry presentation context from the latest frame
+            fused.humanZone = result.humanZone;
+            fused.debug = {
+              ...(fused.debug || {}),
+              fusedFrames: cons.frames,
+              bounds: dbg.bounds,
+              preprocessedCanvas: dbg.preprocessedCanvas,
+              confidence: dbg.confidence,
+            };
+            accepted = fused;
+          }
+        }
+      }
+    }
+
+    if (accepted) {
+      // Show the winning frame as the preview, then present the result
+      ($('previewImg') as HTMLImageElement).src = canvas.toDataURL();
+      $('uploadedPreview').classList.add('visible');
+      decoderImageCanvas = canvas;
+      decoderImageCtx = ctx;
+      closeCameraUI();
+      presentDecoded(canvas, accepted);
+    } else {
+      status.textContent = `Scanning… ${frames} frame${frames === 1 ? '' : 's'}` +
+        (fusion.frameCount > 1 ? ` (fusing ${fusion.frameCount})` : '');
+      scanTimer = window.setTimeout(tick, 350);
+    }
+  };
+
+  scanTimer = window.setTimeout(tick, 350);
+}
+
+function stopContinuousScan() {
+  if (scanTimer !== null) {
+    clearTimeout(scanTimer);
+    scanTimer = null;
+  }
+}
+
 function captureFromCamera() {
   if (!camera?.isActive) return;
+  stopContinuousScan();
 
   const { canvas, ctx } = camera.captureFrame();
   decoderImageCanvas = canvas;
@@ -397,6 +481,11 @@ function captureFromCamera() {
  */
 function runDecode(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
   const decoded = decodeFromImage(canvas, ctx);
+  presentDecoded(canvas, decoded);
+}
+
+/** Display a decoded result and kick off external-name OCR in the background */
+function presentDecoded(canvas: HTMLCanvasElement, decoded: import('./core/types').DecodedResult) {
   displayDecodedData(decoded);
 
   const bounds = decoded.debug?.bounds as
@@ -476,28 +565,33 @@ function displayDecodedData(decoded: import('./core/types').DecodedResult) {
     `;
   }
 
-  // Human Zone status
-  if (decoded.humanZone) {
-    const hz = decoded.humanZone;
+  const fusedFrames = decoded.debug?.fusedFrames as number | undefined;
+  if (!decoded.error && fusedFrames) {
     tiersEl.innerHTML += `
-      <div class="decoded-tier" style="background: rgba(74,144,217,0.1);">
-        <div class="decoded-tier-dot" style="background: var(--accent)"></div>
+      <div class="decoded-tier" style="background: rgba(74,144,217,0.08);">
         <div class="decoded-tier-content">
-          <div class="decoded-tier-label">Human Zone (Orientation Anchor)</div>
-          <div class="decoded-tier-value" style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
-            ${[0,1,2,3,4].map(t => {
-              const active = hz[`tier${t}` as keyof typeof hz];
-              return `<span style="padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; ${active ? `background: ${TIER_COLOURS[t]}; color: #fff;` : 'background: var(--bg-input); color: var(--text-muted);'}">T${t}${active ? ' \u2713' : ''}</span>`;
-            }).join('')}
-          </div>
+          <div class="decoded-tier-label">Continuous scan</div>
+          <div class="decoded-tier-value">Combined ${fusedFrames} camera frames</div>
         </div>
       </div>
     `;
   }
 
-  // Tier conditions
+  // Triage-first ordering: T0 conditions lead, large and unmissable —
+  // this is what a responder needs before anything else on the screen
+  if (decoded.tier0.length > 0) {
+    tiersEl.innerHTML += `
+      <div class="decoded-tier" style="background: rgba(217,38,38,0.12); border-left: 4px solid var(--tier-0);">
+        <div class="decoded-tier-content">
+          <div class="decoded-tier-label" style="color: var(--tier-0);">T0 \u2014 ${TIER_LABELS[0].name} \u2014 ${TIER_LABELS[0].meaning}</div>
+          <div class="decoded-tier-value" style="font-size: 1.2rem; font-weight: 600; line-height: 1.4;">${decoded.tier0.join(', ')}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Then constraints and context
   const tierConfigs = [
-    { key: 'tier0', label: `T0 \u2014 ${TIER_LABELS[0].name}`, colour: TIER_COLOURS[0] },
     { key: 'tier1', label: `T1 \u2014 ${TIER_LABELS[1].name}`, colour: TIER_COLOURS[1] },
     { key: 'tier2', label: `T2 \u2014 ${TIER_LABELS[2].name}`, colour: TIER_COLOURS[2] },
     { key: 'tier3', label: `T3 \u2014 ${TIER_LABELS[3].name}`, colour: TIER_COLOURS[3] },
@@ -518,7 +612,7 @@ function displayDecodedData(decoded: import('./core/types').DecodedResult) {
     `;
   });
 
-  // Phone
+  // Contacts after the clinical picture
   if (decoded.phone) {
     tiersEl.innerHTML += `
       <div class="decoded-tier">
@@ -526,6 +620,25 @@ function displayDecodedData(decoded: import('./core/types').DecodedResult) {
         <div class="decoded-tier-content">
           <div class="decoded-tier-label">T4 \u2014 ${TIER_LABELS[4].name}</div>
           <div class="decoded-tier-value">${decoded.phone}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Glyph triage lights last \u2014 diagnostic cross-check, not clinical data
+  if (decoded.humanZone) {
+    const hz = decoded.humanZone;
+    tiersEl.innerHTML += `
+      <div class="decoded-tier" style="background: rgba(74,144,217,0.08);">
+        <div class="decoded-tier-dot" style="background: var(--accent)"></div>
+        <div class="decoded-tier-content">
+          <div class="decoded-tier-label">Glyph triage lights (cross-check)</div>
+          <div class="decoded-tier-value" style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
+            ${[0,1,2,3,4].map(t => {
+              const active = hz[`tier${t}` as keyof typeof hz];
+              return `<span style="padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; ${active ? `background: ${TIER_COLOURS[t]}; color: #fff;` : 'background: var(--bg-input); color: var(--text-muted);'}">T${t}${active ? ' \u2713' : ''}</span>`;
+            }).join('')}
+          </div>
         </div>
       </div>
     `;
@@ -680,5 +793,9 @@ function renderHarnessGlyph(): HTMLCanvasElement {
     smudge5: t.testSmudge(5),
     rotated2: t.testRotated(2),
     rotated4: t.testRotated(4),
+    // Cardinal orientations (v3.2): a wrist arrives at any angle
+    rot90: t.testRotated(90),
+    rot180: t.testRotated(180),
+    rot270tilt: t.testRotated(273),
   };
 };

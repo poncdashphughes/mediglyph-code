@@ -74,7 +74,7 @@ Total: **40 bytes**, encoded as **80 colour cells** in a **16 x 5 grid**.
 
 ### Decoding
 
-Decoding works by photographing the glyph: the decoder estimates and corrects rotation, builds the colour-correction table from the calibration block, then samples each data cell at nine interior points with majority voting and confidence scoring.
+Decoding works by pointing a camera at the glyph — at any angle. The decoder scans continuously, trying all four orientations and correcting tilt; when no single frame is clean enough, per-cell colour votes are fused across recent frames until the result validates. For each frame it builds the colour-correction table from the calibration block, then samples each data cell at nine interior points with majority voting and confidence scoring.
 
 If cells are still misread, **Reed–Solomon error correction repairs up to 2 bytes outright — or up to 5 when the sampler flags the unreliable cells** — and the CRC confirms the repaired result. A single smudge, glare spot, or worn cell no longer kills the decode.
 
